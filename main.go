@@ -35,18 +35,21 @@ type instruction struct {
 const comchars string = ";*"
 const modchars string = "#$"
 
+var curLine int = 55 // set to 0 when not testing
+
 var errs = map[string][]string{
 	"conversion": {"Hex to byte", "Could not complete conversion."},
 	"mnemonic":   {"Mnemonic", "Could not find a valid mnemonic."},
+	"opcode":     {"Opcode", "Invalid mnemonic/operand combination."},
 	"operand":    {"Operand", "The operand is ill formed."},
 	"parser":     {"Parser", "Could not parse line successfully."}}
 
 func main() {
-	fmt.Println(info["title"] + "\n")
-	testPrint(parseLine("nop", 30))
+	fmt.Println(info["title"])
+	testPrint(assignOpcode(parseLine("")))
 }
 
-func parseLine(line string, num int) (cur instruction) {
+func parseLine(line string) (cur instruction) {
 	if strings.ContainsAny(line, comchars) { // strip comments
 		for _, char := range comchars {
 			line = strings.Split(line, string(char))[0]
@@ -61,40 +64,43 @@ func parseLine(line string, num int) (cur instruction) {
 	if len(lineArr) > 0 && len(lineArr) < 4 {
 		if onPeriphery(lineArr[0], ":", true) {
 			cur.label = strings.ReplaceAll(lineArr[0], ":", "")
+			if len(lineArr) > 1 {
+				if isMnemonic(lineArr[1]) { // mnemonic, label
+					cur.mnemonic = lineArr[1]
+					if len(lineArr) == 2 {
+						cur.kind = "zop"
+					}
+				} else {
+					errHandler(errs["mnemonic"])
+				}
+				if len(lineArr) > 2 {
+					cur = parseOperand(lineArr[2], cur)
+				}
+			}
 		} else {
-			if isMnemonic(lineArr[0]) {
+			if isMnemonic(lineArr[0]) { // mnemonic, no label
 				cur.mnemonic = lineArr[0]
 				if len(lineArr) == 1 {
 					cur.kind = "zop"
 				}
 			} else {
-				errHandler(errs["mnemonic"], num, true)
+				errHandler(errs["mnemonic"])
 			}
-		}
-		if len(lineArr) > 1 {
-			if isMnemonic(lineArr[1]) {
-				cur.mnemonic = lineArr[1]
-				if len(lineArr) == 2 {
-					cur.kind = "zop"
-				}
-			} else {
-				errHandler(errs["mnemonic"], num, true)
-			}
-			if len(lineArr) > 2 {
-				cur = parseOperand(lineArr[2], num, cur)
+			if len(lineArr) > 1 {
+				cur = parseOperand(lineArr[1], cur)
 			}
 		}
 	} else {
-		errHandler(errs["parser"], num, true, "Too many elements in line.")
+		errHandler(errs["parser"], "Too many elements in line.")
 	}
 
 	return cur
 }
 
-func parseOperand(op string, num int, inst instruction) instruction {
+func parseOperand(op string, inst instruction) instruction {
 	op = strings.ToLower(op)
 	if len(op) < 2 {
-		errHandler(errs["operand"], num, true, "Operand is too short.")
+		errHandler(errs["operand"], "Operand is too short.")
 	}
 	// if strings.ContainsAny(op, symbols) { // label check
 	// 	// do label things
@@ -102,10 +108,10 @@ func parseOperand(op string, num int, inst instruction) instruction {
 	var tmp string
 	if onPeriphery(op, "(", false) { // indirect indexed and indexed indirect
 		if strings.ContainsAny(string(op[1]), "#") {
-			errHandler(errs["operand"], num, true, "Operand cannot be immediate.")
+			errHandler(errs["operand"], "Operand cannot be immediate.")
 		}
 		if len(op) < 4 {
-			errHandler(errs["operand"], num, true, "Operand is too short.")
+			errHandler(errs["operand"], "Operand is too short.")
 		}
 		if onPeriphery(op, ",x)", true) {
 			inst.kind = "zpxi"
@@ -118,15 +124,15 @@ func parseOperand(op string, num int, inst instruction) instruction {
 			op = removePeriphery(op, "(", ")")
 			tmp = removeChars(op, modchars)
 			if len(tmp) != 4 && len(tmp) != 2 {
-				errHandler(errs["operand"], num, true, "Address not of expected length.")
+				errHandler(errs["operand"], "Address not of expected length.")
 			}
 		} else {
-			errHandler(errs["operand"], num, true)
+			errHandler(errs["operand"])
 		}
-		inst = parseAddress(op, num, inst)
+		inst = parseAddress(op, inst)
 	} else if len(op) > 2 && onPeriphery(op, ",x", true) {
 		if onPeriphery(op, "#", false) {
-			errHandler(errs["operand"], num, true, "Operand cannot be immediate.")
+			errHandler(errs["operand"], "Operand cannot be immediate.")
 		}
 		tmp = removeChars(removePeriphery(op, "", ",x"), modchars)
 		if len(tmp) == 2 {
@@ -134,28 +140,28 @@ func parseOperand(op string, num int, inst instruction) instruction {
 		} else if len(tmp) == 4 {
 			inst.kind = "absx"
 		} else {
-			errHandler(errs["operand"], num, true, "Bad address.")
+			errHandler(errs["operand"], "Bad address.")
 		}
-		inst = parseAddress(tmp, num, inst)
+		inst = parseAddress(tmp, inst)
 	} else if len(op) > 2 && onPeriphery(op, ",y", true) {
 		if onPeriphery(op, "#", false) {
-			errHandler(errs["operand"], num, true, "Operand cannot be immediate.")
+			errHandler(errs["operand"], "Operand cannot be immediate.")
 		}
 		tmp = removeChars(removePeriphery(op, "", ",y"), modchars)
 		if len(tmp) != 4 {
-			errHandler(errs["operand"], num, true, "Bad address.")
+			errHandler(errs["operand"], "Bad address.")
 		} else {
 			inst.kind = "absy"
 		}
-		inst = parseAddress(tmp, num, inst)
+		inst = parseAddress(tmp, inst)
 	} else if onPeriphery(op, "#", false) {
 		tmp = removeChars(op, modchars)
 		if len(tmp) != 2 {
-			errHandler(errs["operand"], num, true, "Immediate value must be one byte.")
+			errHandler(errs["operand"], "Immediate value must be one byte.")
 		} else {
 			inst.kind = "imm"
 		}
-		inst = parseAddress(tmp, num, inst)
+		inst = parseAddress(tmp, inst)
 	} else {
 		tmp = removeChars(op, modchars)
 		if len(tmp) == 2 {
@@ -163,23 +169,23 @@ func parseOperand(op string, num int, inst instruction) instruction {
 		} else if len(tmp) == 4 {
 			inst.kind = "abs"
 		} else {
-			errHandler(errs["operand"], num, true, "Bad address.")
+			errHandler(errs["operand"], "Bad address.")
 		}
-		inst = parseAddress(tmp, num, inst)
+		inst = parseAddress(tmp, inst)
 	}
 	return inst
 }
 
-func parseAddress(addr string, num int, inst instruction, label ...bool) instruction {
+func parseAddress(addr string, inst instruction, label ...bool) instruction {
 	for _, char := range modchars {
 		addr = strings.ReplaceAll(addr, string(char), "")
 	}
 	if !(len(addr) == 2 || len(addr) == 4) {
-		errHandler(errs["operand"], num, true, "Address is ill formed.")
+		errHandler(errs["operand"], "Address is ill formed.")
 	}
 	bytes, e := hex.DecodeString(addr)
 	if e != nil {
-		errHandler(errs["conversion"], num, true)
+		errHandler(errs["conversion"])
 	}
 	if len(bytes) == 2 {
 		if len(label) == 0 {
@@ -196,7 +202,19 @@ func parseAddress(addr string, num int, inst instruction, label ...bool) instruc
 			inst.addLowByte = bytes[0]
 		}
 	} else {
-		errHandler(errs["conversion"], num, true, "Wrong length of address.")
+		errHandler(errs["conversion"], "Wrong length of address.")
+	}
+	return inst
+}
+
+func assignOpcode(inst instruction) instruction {
+	switch inst.kind {
+	case "zop":
+		inst.opcode = opZop[inst.mnemonic]
+	case "imm":
+		inst.opcode = opImm[inst.mnemonic]
+	default:
+		errHandler(errs["opcode"])
 	}
 	return inst
 }
@@ -213,14 +231,14 @@ func onPeriphery(str string, seq string, right bool) bool {
 			}
 		}
 	} else {
-		errHandler(errs["parser"], 0, true)
+		errHandler(errs["parser"])
 	}
 	return false
 }
 
 func removePeriphery(in string, l string, r string) (out string) {
 	if len(l)+len(r) > len(in) {
-		errHandler(errs["parser"], 0, true)
+		errHandler(errs["parser"])
 	}
 	return in[len(l) : len(in)-len(r)]
 }
@@ -238,6 +256,10 @@ func isMnemonic(str string) bool {
 	if ok {
 		return true
 	}
+	_, ok = pseudoOps[str]
+	if ok {
+		return true
+	}
 	return false
 }
 
@@ -249,12 +271,12 @@ func isDigit(str string) bool {
 	return false
 }
 
-func errHandler(err []string, line int, quit bool, deets ...string) {
+func errHandler(err []string, deets ...string) {
 	fmt.Println("\n" + strings.Repeat("=", 40))
 	tmp := "ERROR: " + err[0]
 	var num string
-	if line != 0 {
-		num = "Line " + strconv.Itoa(line)
+	if curLine != 0 {
+		num = "Line " + strconv.Itoa(curLine)
 	} else {
 		num = ""
 	}
@@ -270,9 +292,7 @@ func errHandler(err []string, line int, quit bool, deets ...string) {
 	}
 	fmt.Println(strings.Repeat("=", 40) + "\n")
 	if !continueOnError {
-		if quit {
-			os.Exit(1)
-		}
+		os.Exit(1)
 	}
 }
 
