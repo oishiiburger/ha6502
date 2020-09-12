@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/hex"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ type instruction struct {
 	mnemonic    string
 	kind        string
 	opcode      byte
+	length      int
 	label       string
 	addLowByte  byte
 	addHighByte byte
@@ -35,10 +37,16 @@ type instruction struct {
 const comchars string = ";*"
 const modchars string = "#$"
 
-var curLine int = 55 // set to 0 when not testing
+var filename string
+var ofilename string
+var curLine int = 0 // set to 0 when not testing
+var curInsts []instruction
+var curObj [][]byte
+var curOrg int
 
 var errs = map[string][]string{
 	"conversion": {"Hex to byte", "Could not complete conversion."},
+	"file":       {"File I/O", "Could not read or write to file."},
 	"mnemonic":   {"Mnemonic", "Could not find a valid mnemonic."},
 	"opcode":     {"Opcode", "Invalid mnemonic/operand combination."},
 	"operand":    {"Operand", "The operand is ill formed."},
@@ -46,7 +54,28 @@ var errs = map[string][]string{
 
 func main() {
 	fmt.Println(info["title"])
-	testPrint(assignOpcode(parseLine("")))
+	// testPrint(assignOpcode(parseLine("test:     jmp (45)")))
+	filename = "./files/test.s"
+	ofilename = "./files/out.o"
+	lines := loadFile(filename)
+	for i, line := range lines {
+		curLine = i
+		curInsts = append(curInsts, parseLine(line))
+	}
+	curObj = asmObject(curInsts)
+	printAssembly(lines, curObj)
+	saveFile(ofilename, curObj)
+	// passOne()
+	// passTwo()
+}
+
+func loadFile(filename string) (lines []string) {
+	file, e := ioutil.ReadFile(filename)
+	if e != nil {
+		errHandler(errs["file"])
+	}
+	lines = strings.Split(string(file), "\n")
+	return lines
 }
 
 func parseLine(line string) (cur instruction) {
@@ -93,7 +122,7 @@ func parseLine(line string) (cur instruction) {
 	} else {
 		errHandler(errs["parser"], "Too many elements in line.")
 	}
-
+	cur = assignOpcode(cur)
 	return cur
 }
 
@@ -103,7 +132,7 @@ func parseOperand(op string, inst instruction) instruction {
 		errHandler(errs["operand"], "Operand is too short.")
 	}
 	// if strings.ContainsAny(op, symbols) { // label check
-	// 	// do label things
+	// 	// do label things in pass 2
 	// }
 	var tmp string
 	if onPeriphery(op, "(", false) { // indirect indexed and indexed indirect
@@ -165,9 +194,19 @@ func parseOperand(op string, inst instruction) instruction {
 	} else {
 		tmp = removeChars(op, modchars)
 		if len(tmp) == 2 {
-			inst.kind = "zp"
+			_, ok := opRel[inst.mnemonic]
+			if ok {
+				inst.kind = "rel"
+			} else {
+				inst.kind = "zp"
+			}
 		} else if len(tmp) == 4 {
-			inst.kind = "abs"
+			_, ok := opRel[inst.mnemonic]
+			if ok {
+				inst.kind = "rel"
+			} else {
+				inst.kind = "abs"
+			}
 		} else {
 			errHandler(errs["operand"], "Bad address.")
 		}
@@ -208,15 +247,142 @@ func parseAddress(addr string, inst instruction, label ...bool) instruction {
 }
 
 func assignOpcode(inst instruction) instruction {
-	switch inst.kind {
-	case "zop":
-		inst.opcode = opZop[inst.mnemonic]
-	case "imm":
-		inst.opcode = opImm[inst.mnemonic]
-	default:
-		errHandler(errs["opcode"])
+	if !inst.isComment {
+		_, ok := pseudoOps[inst.mnemonic]
+		if ok {
+			inst.kind = "pse"
+		} else {
+			switch inst.kind {
+			case "zop":
+				_, ok = opZop[inst.mnemonic]
+				if ok {
+					inst.opcode = opZop[inst.mnemonic]
+					inst.length = 1
+				}
+			case "imm":
+				_, ok = opImm[inst.mnemonic]
+				if ok {
+					inst.opcode = opImm[inst.mnemonic]
+					inst.length = 2
+				}
+			case "zp":
+				_, ok = opZp[inst.mnemonic]
+				if ok {
+					inst.opcode = opZp[inst.mnemonic]
+					inst.length = 2
+				}
+			case "zpx":
+				_, ok = opZpx[inst.mnemonic]
+				if ok {
+					inst.opcode = opZpx[inst.mnemonic]
+					inst.length = 2
+				}
+			case "abs":
+				_, ok = opAbs[inst.mnemonic]
+				if ok {
+					inst.opcode = opAbs[inst.mnemonic]
+					inst.length = 3
+				}
+			case "absx":
+				_, ok = opAbsx[inst.mnemonic]
+				if ok {
+					inst.opcode = opAbsx[inst.mnemonic]
+					inst.length = 3
+				}
+			case "absy":
+				_, ok = opAbsy[inst.mnemonic]
+				if ok {
+					inst.opcode = opAbsy[inst.mnemonic]
+					inst.length = 3
+				}
+			case "zpxi":
+				_, ok = opZpxi[inst.mnemonic]
+				if ok {
+					inst.opcode = opZpxi[inst.mnemonic]
+					inst.length = 2
+				}
+			case "zpiy":
+				_, ok = opZpiy[inst.mnemonic]
+				if ok {
+					inst.opcode = opZpiy[inst.mnemonic]
+					inst.length = 2
+				}
+			case "ind":
+				_, ok = opInd[inst.mnemonic]
+				if ok {
+					inst.opcode = opInd[inst.mnemonic]
+					inst.length = 3
+				}
+			case "rel":
+				_, ok = opRel[inst.mnemonic]
+				if ok {
+					inst.opcode = opRel[inst.mnemonic]
+					inst.length = 3
+				}
+			default:
+				errHandler(errs["opcode"])
+			}
+		}
+		if inst.opcode == 0 && inst.mnemonic != "brk" {
+			errHandler(errs["opcode"])
+		}
 	}
 	return inst
+}
+
+func asmObject(insts []instruction) (obj [][]byte) {
+	for i, inst := range insts {
+		var tmp []byte
+		curLine = i
+		if inst.isComment {
+			tmp = append(tmp, 0xff) // use 0xff for comment lines
+		} else {
+			tmp = append(tmp, inst.opcode)
+			if inst.length > 1 {
+				tmp = append(tmp, inst.opLowByte)
+				if inst.length > 2 {
+					tmp = append(tmp, inst.opHighByte)
+				}
+			}
+		}
+		obj = append(obj, tmp)
+	}
+	return obj
+}
+
+func printAssembly(lines []string, obj [][]byte) {
+	fmt.Println("\nLine# | Symbol | Object   | File")
+	fmt.Println(strings.Repeat("=", 40))
+	for i, line := range lines {
+		num := strconv.Itoa(i + 1)
+		fmt.Print(num + strings.Repeat(" ", 6-len(num)) + "| ")
+		fmt.Print(strings.Repeat(" ", 7) + "| ") //update for symbol table
+		objLine := ""
+		for _, curByte := range obj[i] {
+			if curByte == 0xff {
+				break
+			}
+			objLine += fmt.Sprintf("%x ", curByte)
+		}
+		fmt.Print(strings.ToUpper(objLine) + strings.Repeat(" ", 9-len(objLine)) + "| ")
+		fmt.Println(line)
+	}
+}
+
+func saveFile(filename string, obj [][]byte) {
+	var tmp []byte
+	for _, cur := range obj {
+		for _, byt := range cur {
+			if byt != 0xff {
+				tmp = append(tmp, byt)
+			}
+		}
+	}
+	e := ioutil.WriteFile(filename, tmp, 0644)
+	if e != nil {
+		errHandler(errs["file"])
+	}
+	fmt.Println("\nWrote " + strconv.Itoa(len(tmp)) + " bytes to " + filename + ".")
 }
 
 func onPeriphery(str string, seq string, right bool) bool {
