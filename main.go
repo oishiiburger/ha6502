@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -22,35 +23,46 @@ var continueOnError bool = false
 
 // Each line will get parsed into an instance of line
 type instruction struct {
-	mnemonic    string
-	kind        string
-	opcode      byte
-	length      int
+	mnemonic   string
+	kind       string
+	opcode     byte
+	length     int
+	label      string
+	opLowByte  byte
+	opHighByte byte
+	isComment  bool
+}
+
+type symbol struct {
 	label       string
 	addLowByte  byte
 	addHighByte byte
-	opLowByte   byte
-	opHighByte  byte
-	isComment   bool
+	intAddr     int
 }
 
 const comchars string = ";*"
 const modchars string = "#$"
+const maxLabelLength int = 6
 
 var filename string
 var ofilename string
+
 var curLine int = 0 // set to 0 when not testing
 var curInsts []instruction
+var curSymbols []symbol
 var curObj [][]byte
-var curOrg int
+var curOrg int = 0
 
 var errs = map[string][]string{
-	"conversion": {"Hex to byte", "Could not complete conversion."},
-	"file":       {"File I/O", "Could not read or write to file."},
-	"mnemonic":   {"Mnemonic", "Could not find a valid mnemonic."},
-	"opcode":     {"Opcode", "Invalid mnemonic/operand combination."},
-	"operand":    {"Operand", "The operand is ill formed."},
-	"parser":     {"Parser", "Could not parse line successfully."}}
+	"conversion":  {"Hex to byte", "Could not complete conversion."},
+	"file":        {"File I/O", "Could not read or write to file."},
+	"labelLength": {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
+	"mnemonic":    {"Mnemonic", "Could not find a valid mnemonic."},
+	"opcode":      {"Opcode", "Invalid mnemonic/operand combination."},
+	"operand":     {"Operand", "The operand is ill formed."},
+	"org":         {"Org", "Pseudo-op address could not be determined."},
+	"parser":      {"Parser", "Could not parse line successfully."},
+	"symbol":      {"Symbol", "Could not determine symbol address."}}
 
 func main() {
 	fmt.Println(info["title"])
@@ -63,7 +75,10 @@ func main() {
 		curInsts = append(curInsts, parseLine(line))
 	}
 	curObj = asmObject(curInsts)
-	printAssembly(lines, curObj)
+	curOrg = setOrg(curInsts)
+	curSymbols = getSymbols(curInsts, curObj, curOrg)
+	printAssembly(lines, curObj, curSymbols, curOrg)
+	printSymbolTable(curSymbols)
 	saveFile(ofilename, curObj)
 	// passOne()
 	// passTwo()
@@ -79,11 +94,15 @@ func loadFile(filename string) (lines []string) {
 }
 
 func parseLine(line string) (cur instruction) {
+	if len(line) == 0 { // ignore blank lines
+		cur.isComment = true
+		return cur
+	}
 	if strings.ContainsAny(line, comchars) { // strip comments
 		for _, char := range comchars {
 			line = strings.Split(line, string(char))[0]
 		}
-		if len(line) == 0 { // if the entire line is a comment
+		if len(strings.TrimSpace(line)) == 0 { // if the entire line is a comment
 			cur.isComment = true
 			return cur
 		}
@@ -93,6 +112,9 @@ func parseLine(line string) (cur instruction) {
 	if len(lineArr) > 0 && len(lineArr) < 4 {
 		if onPeriphery(lineArr[0], ":", true) {
 			cur.label = strings.ReplaceAll(lineArr[0], ":", "")
+			if len(cur.label) > maxLabelLength {
+				errHandler(errs["labelLength"])
+			}
 			if len(lineArr) > 1 {
 				if isMnemonic(lineArr[1]) { // mnemonic, label
 					cur.mnemonic = lineArr[1]
@@ -227,19 +249,10 @@ func parseAddress(addr string, inst instruction, label ...bool) instruction {
 		errHandler(errs["conversion"])
 	}
 	if len(bytes) == 2 {
-		if len(label) == 0 {
-			inst.opHighByte = bytes[0]
-			inst.opLowByte = bytes[1]
-		} else {
-			inst.addHighByte = bytes[0]
-			inst.addLowByte = bytes[1]
-		}
+		inst.opHighByte = bytes[0]
+		inst.opLowByte = bytes[1]
 	} else if len(bytes) == 1 {
-		if len(label) == 0 {
-			inst.opLowByte = bytes[0]
-		} else {
-			inst.addLowByte = bytes[0]
-		}
+		inst.opLowByte = bytes[0]
 	} else {
 		errHandler(errs["conversion"], "Wrong length of address.")
 	}
@@ -251,6 +264,8 @@ func assignOpcode(inst instruction) instruction {
 		_, ok := pseudoOps[inst.mnemonic]
 		if ok {
 			inst.kind = "pse"
+			inst.isComment = true // set pseudo-ops to comments
+			inst.length = 3
 		} else {
 			switch inst.kind {
 			case "zop":
@@ -323,9 +338,9 @@ func assignOpcode(inst instruction) instruction {
 				errHandler(errs["opcode"])
 			}
 		}
-		if inst.opcode == 0 && inst.mnemonic != "brk" {
-			errHandler(errs["opcode"])
-		}
+		// if inst.opcode == 0 && inst.mnemonic != "brk" {
+		// 	errHandler(errs["opcode"])
+		// }
 	}
 	return inst
 }
@@ -334,9 +349,7 @@ func asmObject(insts []instruction) (obj [][]byte) {
 	for i, inst := range insts {
 		var tmp []byte
 		curLine = i
-		if inst.isComment {
-			tmp = append(tmp, 0xff) // use 0xff for comment lines
-		} else {
+		if !inst.isComment {
 			tmp = append(tmp, inst.opcode)
 			if inst.length > 1 {
 				tmp = append(tmp, inst.opLowByte)
@@ -350,32 +363,99 @@ func asmObject(insts []instruction) (obj [][]byte) {
 	return obj
 }
 
-func printAssembly(lines []string, obj [][]byte) {
-	fmt.Println("\nLine# | Symbol | Object   | File")
-	fmt.Println(strings.Repeat("=", 40))
-	for i, line := range lines {
-		num := strconv.Itoa(i + 1)
-		fmt.Print(num + strings.Repeat(" ", 6-len(num)) + "| ")
-		fmt.Print(strings.Repeat(" ", 7) + "| ") //update for symbol table
-		objLine := ""
-		for _, curByte := range obj[i] {
-			if curByte == 0xff {
-				break
-			}
-			objLine += fmt.Sprintf("%x ", curByte)
+func setOrg(insts []instruction) (org int) {
+	for _, inst := range insts {
+		if inst.mnemonic == "org" {
+			var addr = [2]byte{inst.opHighByte, inst.opLowByte}
+			return hexToInt(addr)
 		}
-		fmt.Print(strings.ToUpper(objLine) + strings.Repeat(" ", 9-len(objLine)) + "| ")
-		fmt.Println(line)
+	}
+	return 0
+}
+
+func getSymbols(insts []instruction, obj [][]byte, PC int) (symbols []symbol) {
+	for i, inst := range insts {
+		curLine = i
+		if inst.label != "" {
+			var tmp symbol
+			tmp.label = inst.label
+			tmpAddr := [2]byte{inst.opHighByte, inst.opLowByte}
+			tmp.intAddr = hexToInt(tmpAddr) + PC
+			tmp.addHighByte = intToHex(tmp.intAddr)[0]
+			tmp.addLowByte = intToHex(tmp.intAddr)[1]
+			symbols = append(symbols, tmp)
+		}
+		if !inst.isComment && !(inst.kind == "pse") {
+			PC += inst.length
+		}
+	}
+	return symbols
+}
+
+func printAssembly(lines []string, obj [][]byte, symbols []symbol, PC int) {
+	// addr | sym | ops | line | file
+	// 5	  7	    10    7      no limit
+	var symi int = 0
+	printAtWidth("\nAssembly Listing ", 75, "=")
+	fmt.Println()
+	for i, line := range obj {
+		if len(line) > 0 {
+			printAtWidth(fmt.Sprintf("%04X", PC), 5)
+			// PC += len(line)
+		} else {
+			printAtWidth("", 5)
+		}
+		if symbols[symi].intAddr == PC && len(line) > 0 {
+			printAtWidth(symbols[symi].label, 7)
+			if len(symbols)-1 > symi {
+				symi++
+			}
+		} else {
+			printAtWidth("", 7)
+		}
+		var tmp string
+		for _, op := range line {
+			tmp += fmt.Sprintf("%02X ", op)
+		}
+		printAtWidth(tmp, 10)
+		fmt.Print("| ")
+		printAtWidth(strconv.Itoa(i+1), 7)
+		fmt.Println(lines[i])
+		if len(line) > 0 {
+			PC += len(line)
+		}
+	}
+}
+
+func printSymbolTable(symbols []symbol) {
+	var colWidth int = 60
+	var runWidth int = 0
+	printAtWidth("\nSymbol Table ", 75, "=")
+	fmt.Println()
+	var tmp []string
+	for _, symbol := range symbols {
+		tmp = append(tmp, symbol.label)
+	}
+	sort.Strings(tmp)
+	for _, ssymbol := range tmp {
+		for _, symbol := range symbols {
+			if symbol.label == ssymbol {
+				runWidth += printAtWidth(symbol.label, 8)
+				runWidth += printAtWidth(fmt.Sprintf("%04X", symbol.intAddr), 12)
+				if runWidth > colWidth {
+					fmt.Print("\n")
+					runWidth = 0
+				}
+			}
+		}
 	}
 }
 
 func saveFile(filename string, obj [][]byte) {
 	var tmp []byte
-	for _, cur := range obj {
-		for _, byt := range cur {
-			if byt != 0xff {
-				tmp = append(tmp, byt)
-			}
+	for _, line := range obj {
+		for _, op := range line {
+			tmp = append(tmp, op)
 		}
 	}
 	e := ioutil.WriteFile(filename, tmp, 0644)
@@ -437,6 +517,36 @@ func isDigit(str string) bool {
 	return false
 }
 
+func hexToInt(addr [2]byte) int {
+	tmp := fmt.Sprintf("%02x%02x", addr[0], addr[1])
+	o, e := strconv.ParseInt(tmp, 16, 16)
+	if e != nil {
+		errHandler(errs["org"])
+	}
+	return int(o)
+}
+
+func intToHex(addr int) []byte {
+	str := fmt.Sprintf("%04x", addr)
+	tmp, _ := hex.DecodeString(str)
+	return tmp
+}
+
+func printAtWidth(str string, wid int, filler ...string) (length int) {
+	var tmp string
+	var fill string = " "
+	if len(filler) > 0 {
+		fill = filler[0]
+	}
+	if len(str) < wid {
+		tmp = fmt.Sprint(str + strings.Repeat(fill, wid-len(str)))
+	} else {
+		tmp = fmt.Sprint(str[:wid])
+	}
+	fmt.Print(tmp)
+	return len(tmp)
+}
+
 func errHandler(err []string, deets ...string) {
 	fmt.Println("\n" + strings.Repeat("=", 40))
 	tmp := "ERROR: " + err[0]
@@ -474,7 +584,5 @@ func testPrint(inst instruction) {
 		fmt.Printf("Add HB    %x\n", inst.opHighByte)
 		fmt.Printf("Add LB    %x\n", inst.opLowByte)
 		fmt.Println("Label:    " + inst.label)
-		fmt.Printf("Op HB     %x\n", inst.addHighByte)
-		fmt.Printf("Op LB     %x\n", inst.addLowByte)
 	}
 }
