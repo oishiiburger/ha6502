@@ -1,8 +1,8 @@
 /* 	Hobbyist's Assembler for 6502 microprocessors
-	A simple assembler for little projects and tinkering
-	See README.md for more information
+A simple assembler for little projects and tinkering
+See README.md for more information
 
-	-> main.go
+-> main.go
 
 =============================================================================
 MIT License
@@ -35,7 +35,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -72,7 +71,7 @@ type symbol struct {
 // Consts
 const comchars string = ";*"
 const modchars string = "#$"
-const maxLabelLength int = 6
+const maxLabelLength int = 7
 
 // Globals
 var filename string
@@ -154,7 +153,7 @@ func parseLine(line string) (cur instruction) {
 	lineArr := strings.Fields(line)
 	if len(lineArr) > 0 && len(lineArr) < 4 {
 		if rLabel.MatchString(lineArr[0]) {
-			cur.label = strings.ReplaceAll(lineArr[0], ":", "")
+			cur.label = lineArr[0]
 			if len(cur.label) > maxLabelLength {
 				errHandler(errs["labelLength"])
 			}
@@ -224,13 +223,13 @@ func parseOperand(op string, inst instruction) instruction {
 		case rLabelOpInd.MatchString(op):
 			inst.kind = "ind"
 		}
-		inst = parseAddress(rLabelSolo.FindString(op), inst, symbols)
+		inst = parseAddress(rLabel.FindString(op), inst, symbols)
 	}
 	return inst
 }
 
 func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
-	if rLabelSolo.MatchString(addr) {
+	if rLabel.MatchString(addr) {
 		for _, symbol := range symbols {
 			if symbol.label == addr { // symbol is known from previous pass
 				inst.opHighByte = intToHex(symbol.intAddr)[0]
@@ -409,6 +408,7 @@ func printAssembly(lines []string, obj [][]byte, PC int) {
 	// addr | sym | ops | line | file
 	// 5	  7	    10    7      no limit
 	var symi int = 0
+	var PCStart int = PC
 	printAtWidth("\nAssembly Listing ", 75, "=")
 	fmt.Println()
 	for i, line := range obj {
@@ -438,6 +438,7 @@ func printAssembly(lines []string, obj [][]byte, PC int) {
 			PC += len(line)
 		}
 	}
+	fmt.Printf("\nObject will fill from $%04X to $%04X. ($%04X bytes)\n", PCStart, PC, PC-PCStart)
 }
 
 func printSymbolTable() {
@@ -453,12 +454,12 @@ func printSymbolTable() {
 	for _, ssymbol := range tmp {
 		for _, symbol := range symbols {
 			if symbol.label == ssymbol {
-				runWidth += printAtWidth(symbol.label, 8)
-				runWidth += printAtWidth(fmt.Sprintf("%04X", symbol.intAddr), 12)
 				if runWidth > colWidth {
 					fmt.Print("\n")
 					runWidth = 0
 				}
+				runWidth += printAtWidth(symbol.label, 8)
+				runWidth += printAtWidth(fmt.Sprintf("$%04X", symbol.intAddr), 12)
 			}
 		}
 	}
@@ -475,7 +476,7 @@ func saveFile(filename string, obj [][]byte) {
 	if e != nil {
 		errHandler(errs["file"])
 	}
-	fmt.Println("\nWrote " + strconv.Itoa(len(tmp)) + " bytes to " + filename + ".")
+	fmt.Println("\n\nWrote " + strconv.Itoa(len(tmp)) + " bytes to " + filename + ".")
 }
 
 func removePeriphery(in string, l string, r string) (out string) {
@@ -515,7 +516,6 @@ func isDigit(str string) bool {
 
 func hexToInt(addr [2]byte) int {
 	tmp := fmt.Sprintf("%02x%02x", addr[0], addr[1])
-	log.Println(tmp)
 	o, e := strconv.ParseInt(tmp, 16, 64)
 	if e != nil {
 		errHandler(errs["conversion"], "Error converting hex to int.")

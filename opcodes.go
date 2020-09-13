@@ -51,10 +51,9 @@ var rInd = regexp.MustCompile(`^[(][$]?[0-9a-f]{2,4}[)]$`)
 var rAddr = regexp.MustCompile(`[0-9a-f]{2,4}`)
 var rMnem = regexp.MustCompile(`^[A-Za-z]{3}$`)
 
-var rLabel = regexp.MustCompile(`^[A-Za-z]{1,6}[:]$`)
-var rLabelSolo = regexp.MustCompile(`^[A-Za-z]{1,6}$`)
-var rLabelOpAbs = regexp.MustCompile(`^[A-Za-z]{1,6}$`)
-var rLabelOpInd = regexp.MustCompile(`^[(][A-Za-z]{1,6}[)]$`)
+var rLabel = regexp.MustCompile(`^_[A-Za-z]{1,6}$`)
+var rLabelOpAbs = regexp.MustCompile(`^_[A-Za-z]{1,6}$`)
+var rLabelOpInd = regexp.MustCompile(`^_[(][A-Za-z]{1,6}[)]$`)
 
 var pseudoOps = map[string]string{
 	"dfb": "Define a byte of data",        // not yet implemented
