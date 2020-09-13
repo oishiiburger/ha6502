@@ -51,9 +51,9 @@ var rInd = regexp.MustCompile(`^[(][$]?[0-9a-f]{2,4}[)]$`)
 var rAddr = regexp.MustCompile(`[0-9a-f]{2,4}`)
 var rMnem = regexp.MustCompile(`^[A-Za-z]{3}$`)
 
-var rLabel = regexp.MustCompile(`^_[A-Za-z]{1,6}$`)
-var rLabelOpAbs = regexp.MustCompile(`^_[A-Za-z]{1,6}$`)
-var rLabelOpInd = regexp.MustCompile(`^_[(][A-Za-z]{1,6}[)]$`)
+var rLabel = regexp.MustCompile(`^[A-Za-z]{1,6}:$`)
+var rLabelOpAbs = regexp.MustCompile(`^[A-Za-z]{1,6}:$`)
+var rLabelOpInd = regexp.MustCompile(`^[(][A-Za-z]{1,6}:[)]$`)
 
 var pseudoOps = map[string]string{
 	"dfb": "Define a byte of data",        // not yet implemented
@@ -63,6 +63,8 @@ var pseudoOps = map[string]string{
 var mnemonics = map[string]string{
 	"adc": "Add memory to accumulator with carry",
 	"bcc": "Branch on carry clear",
+	"bcs": "Branch on carry set",
+	"beq": "Branch on result zero",
 	"brk": "Force break",
 	"jmp": "Jump to new location",
 	"lda": "Load accumulator with memory",
@@ -111,4 +113,6 @@ var opInd = map[string]byte{
 	"jmp": 0x6c}
 
 var opRel = map[string]byte{
-	"bcc": 0x90}
+	"bcc": 0x90,
+	"bcs": 0xb0,
+	"beq": 0xf0}

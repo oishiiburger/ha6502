@@ -44,7 +44,9 @@ import (
 )
 
 var info = map[string]string{
-	"title":      "Hobbyist Assembler for 6502 microprocessors",
+	"title":      "Hobbyist's Assembler for 6502 microprocessors",
+	"copyright":  "(c) 2020 Dr. Christopher Graham",
+	"github":     "https://github.com/oishiiburger/ha6502",
 	"shortTitle": "ha6502",
 }
 
@@ -55,9 +57,9 @@ type instruction struct {
 	kind       string
 	opcode     byte
 	length     int
-	label      string
 	opLowByte  byte
 	opHighByte byte
+	label      string
 	isComment  bool
 }
 
@@ -77,22 +79,26 @@ const maxLabelLength int = 7
 var filename string
 var ofilename string
 var curLine int = 0 // set to 0 when not testing
+var org int = 0
 var symbols []symbol
 
 // For error handling
 var errs = map[string][]string{
 	"conversion":  {"Hex to byte", "Could not complete conversion."},
 	"file":        {"File I/O", "Could not read or write to file."},
+	"label":       {"Label", "Could not parse label."},
 	"labelLength": {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
 	"mnemonic":    {"Mnemonic", "Could not find a valid mnemonic."},
 	"opcode":      {"Opcode", "Invalid mnemonic/operand combination."},
 	"operand":     {"Operand", "The operand is ill formed."},
 	"org":         {"Org", "Pseudo-op address could not be determined."},
 	"parser":      {"Parser", "Could not parse line successfully."},
+	"relative":    {"Branching", "Relative address is out of range."},
+	"space":       {"Memory", "Object will not fit in address space."},
 	"symbol":      {"Symbol", "Could not determine symbol address."}}
 
 func main() {
-	fmt.Println(info["title"])
+	fmt.Println(info["title"] + "\n" + info["copyright"] + "\n" + info["github"])
 	filename = "./files/test.s"
 	ofilename = "./files/out.o"
 	lines := loadFile(filename)
@@ -100,20 +106,19 @@ func main() {
 	var pass1Inst []instruction
 	var pass2Inst []instruction
 
-	var org int = 0
-
 	var objectCode [][]byte
 
 	pass1Inst = runPass(lines, pass1Inst)
 
 	org = setOrg(pass1Inst)
-	getSymbols(pass1Inst, org)
+	getSymbols(pass1Inst)
+	// run through relative insts?
 
 	pass2Inst = runPass(lines, pass2Inst)
 
 	objectCode = asmObject(pass2Inst)
 
-	printAssembly(lines, objectCode, org)
+	printAssembly(lines, objectCode)
 	printSymbolTable()
 	saveFile(ofilename, objectCode)
 }
@@ -207,7 +212,11 @@ func parseOperand(op string, inst instruction) instruction {
 		case rZpxi.MatchString(op):
 			inst.kind = "zpxi"
 		case rAbs.MatchString(op):
-			inst.kind = "abs"
+			if _, ok := opRel[inst.mnemonic]; ok { // check if actually a relative instruction (branches)
+				inst.kind = "rel"
+			} else {
+				inst.kind = "abs"
+			}
 		case rAbsx.MatchString(op):
 			inst.kind = "absx"
 		case rAbsy.MatchString(op):
@@ -219,11 +228,20 @@ func parseOperand(op string, inst instruction) instruction {
 	} else { // handle labels
 		switch {
 		case rLabelOpAbs.MatchString(op):
-			inst.kind = "abs"
+			if _, ok := opRel[inst.mnemonic]; ok { // check if actually a relative instruction (branches)
+				inst.kind = "rel"
+			} else {
+				inst.kind = "abs"
+			}
 		case rLabelOpInd.MatchString(op):
 			inst.kind = "ind"
 		}
-		inst = parseAddress(rLabel.FindString(op), inst, symbols)
+		found := rLabel.FindString(op)
+		if len(found) > 0 {
+			inst = parseAddress(found, inst, symbols)
+		} else {
+			errHandler(errs["label"])
+		}
 	}
 	return inst
 }
@@ -360,15 +378,46 @@ func assignOpcode(inst instruction) instruction {
 }
 
 func asmObject(insts []instruction) (obj [][]byte) {
+	var PC int = org
 	for i, inst := range insts {
+		if PC > 0xffff {
+			errHandler(errs["space"], "Set org to lower starting address.")
+		}
 		var tmp []byte
 		curLine = i
 		if !inst.isComment {
-			tmp = append(tmp, inst.opcode)
-			if inst.length > 1 {
-				tmp = append(tmp, inst.opLowByte)
-				if inst.length > 2 {
-					tmp = append(tmp, inst.opHighByte)
+			if inst.kind == "rel" { // handle relative addressing
+				tmp = append(tmp, inst.opcode)
+				var tmpAddr = [2]byte{inst.opHighByte, inst.opLowByte}
+				var intTmpAddr = hexToInt(tmpAddr)
+				if intTmpAddr > PC { // relative branch is positive
+					diff := intTmpAddr - (PC + 3)
+					if diff > 127 {
+						errHandler(errs["relative"], "Positive offset greater than 127.")
+					} else {
+						tmp = append(tmp, intToHex(diff)[1]) // low byte
+						PC += 2
+					}
+				} else { // relative branch is negative
+					diff := (PC + 1) - intTmpAddr
+					diff = 255 - diff
+					if diff < 127 {
+						errHandler(errs["relative"], "Negative offset greater than -128.")
+					} else {
+						tmp = append(tmp, intToHex(diff)[1]) // low byte
+						PC += 2
+					}
+				}
+			} else {
+				tmp = append(tmp, inst.opcode)
+				PC++
+				if inst.length > 1 {
+					tmp = append(tmp, inst.opLowByte)
+					PC++
+					if inst.length > 2 {
+						tmp = append(tmp, inst.opHighByte)
+						PC++
+					}
 				}
 			}
 		}
@@ -387,7 +436,8 @@ func setOrg(insts []instruction) (org int) {
 	return 0
 }
 
-func getSymbols(insts []instruction, PC int) {
+func getSymbols(insts []instruction) {
+	var PC int = org
 	for i, inst := range insts {
 		curLine = i
 		if inst.label != "" {
@@ -404,10 +454,11 @@ func getSymbols(insts []instruction, PC int) {
 	}
 }
 
-func printAssembly(lines []string, obj [][]byte, PC int) {
+func printAssembly(lines []string, obj [][]byte) {
 	// addr | sym | ops | line | file
 	// 5	  7	    10    7      no limit
 	var symi int = 0
+	var PC int = org
 	var PCStart int = PC
 	printAtWidth("\nAssembly Listing ", 75, "=")
 	fmt.Println()
