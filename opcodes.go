@@ -1,7 +1,29 @@
 package main
 
+import "regexp"
+
 // Opcode tables
 // zop, imm, zp, zpx, abs, absx, absy, zpxi, zpiy, ind, rel
+
+// Regexp for matching operands
+var rOperand = regexp.MustCompile(`[(]?[#$]*[0-9a-f]{2,4}[,xy)]*`)
+var rImm = regexp.MustCompile(`^#[$]?[0-9a-f]{2}$`)
+var rZp = regexp.MustCompile(`^[$]?[0-9a-f]{2}$`)
+var rZpx = regexp.MustCompile(`^[$]?[0-9a-f]{2},x$`)
+var rAbs = regexp.MustCompile(`^[$]?[0-9a-f]{4}$`)
+var rAbsx = regexp.MustCompile(`^[$]?[0-9a-f]{4},x$`)
+var rAbsy = regexp.MustCompile(`^[$]?[0-9a-f]{4},y$`)
+var rZpxi = regexp.MustCompile(`^[(][$]?[0-9a-f]{2},x[])]$`)
+var rZpiy = regexp.MustCompile(`^[(][$]?[0-9a-f]{2}[)],y$`)
+var rInd = regexp.MustCompile(`^[(][$]?[0-9a-f]{2,4}[)]$`)
+
+var rAddr = regexp.MustCompile(`[0-9a-f]{2,4}`)
+var rMnem = regexp.MustCompile(`^[A-Za-z]{3}$`)
+
+var rLabel = regexp.MustCompile(`^[A-Za-z]{1,6}[:]$`)
+var rLabelSolo = regexp.MustCompile(`^[A-Za-z]{1,6}$`)
+var rLabelOpAbs = regexp.MustCompile(`^[A-Za-z]{1,6}$`)
+var rLabelOpInd = regexp.MustCompile(`^[(][A-Za-z]{1,6}[)]$`)
 
 var pseudoOps = map[string]string{
 	"org": "Set start address for program"}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -47,11 +48,15 @@ const maxLabelLength int = 6
 var filename string
 var ofilename string
 
+var passCount int = 1
+
 var curLine int = 0 // set to 0 when not testing
-var curInsts []instruction
-var curSymbols []symbol
+var symbols []symbol
 var curObj [][]byte
 var curOrg int = 0
+
+var pass1Insts []instruction
+var pass2Insts []instruction
 
 var errs = map[string][]string{
 	"conversion":  {"Hex to byte", "Could not complete conversion."},
@@ -66,22 +71,28 @@ var errs = map[string][]string{
 
 func main() {
 	fmt.Println(info["title"])
-	// testPrint(assignOpcode(parseLine("test:     jmp (45)")))
 	filename = "./files/test.s"
 	ofilename = "./files/out.o"
 	lines := loadFile(filename)
-	for i, line := range lines {
+
+	for i, line := range lines { // pass 1 instruction check
 		curLine = i
-		curInsts = append(curInsts, parseLine(line))
+		pass1Insts = append(pass1Insts, parseLine(line))
 	}
-	curObj = asmObject(curInsts)
-	curOrg = setOrg(curInsts)
-	curSymbols = getSymbols(curInsts, curObj, curOrg)
-	printAssembly(lines, curObj, curSymbols, curOrg)
-	printSymbolTable(curSymbols)
+
+	curOrg = setOrg(pass1Insts)
+	symbols = getSymbols(pass1Insts, curObj, curOrg)
+
+	for i, line := range lines { // pass 2 instruction check
+		curLine = i
+		pass2Insts = append(pass2Insts, parseLine(line))
+	}
+
+	curObj = asmObject(pass2Insts)
+
+	printAssembly(lines, curObj, symbols, curOrg)
+	printSymbolTable(symbols)
 	saveFile(ofilename, curObj)
-	// passOne()
-	// passTwo()
 }
 
 func loadFile(filename string) (lines []string) {
@@ -110,7 +121,7 @@ func parseLine(line string) (cur instruction) {
 	cur.isComment = false
 	lineArr := strings.Fields(line)
 	if len(lineArr) > 0 && len(lineArr) < 4 {
-		if onPeriphery(lineArr[0], ":", true) {
+		if rLabel.MatchString(lineArr[0]) {
 			cur.label = strings.ReplaceAll(lineArr[0], ":", "")
 			if len(cur.label) > maxLabelLength {
 				errHandler(errs["labelLength"])
@@ -150,111 +161,61 @@ func parseLine(line string) (cur instruction) {
 
 func parseOperand(op string, inst instruction) instruction {
 	op = strings.ToLower(op)
-	if len(op) < 2 {
-		errHandler(errs["operand"], "Operand is too short.")
-	}
-	// if strings.ContainsAny(op, symbols) { // label check
-	// 	// do label things in pass 2
-	// }
-	var tmp string
-	if onPeriphery(op, "(", false) { // indirect indexed and indexed indirect
-		if strings.ContainsAny(string(op[1]), "#") {
-			errHandler(errs["operand"], "Operand cannot be immediate.")
-		}
-		if len(op) < 4 {
-			errHandler(errs["operand"], "Operand is too short.")
-		}
-		if onPeriphery(op, ",x)", true) {
-			inst.kind = "zpxi"
-			op = removePeriphery(op, "(", ",x)")
-		} else if len(op) > 2 && onPeriphery(op, "),y", true) {
-			inst.kind = "zpiy"
-			op = removePeriphery(op, "(", "),y")
-		} else if onPeriphery(op, ")", true) {
-			inst.kind = "ind"
-			op = removePeriphery(op, "(", ")")
-			tmp = removeChars(op, modchars)
-			if len(tmp) != 4 && len(tmp) != 2 {
-				errHandler(errs["operand"], "Address not of expected length.")
-			}
-		} else {
-			errHandler(errs["operand"])
-		}
-		inst = parseAddress(op, inst)
-	} else if len(op) > 2 && onPeriphery(op, ",x", true) {
-		if onPeriphery(op, "#", false) {
-			errHandler(errs["operand"], "Operand cannot be immediate.")
-		}
-		tmp = removeChars(removePeriphery(op, "", ",x"), modchars)
-		if len(tmp) == 2 {
-			inst.kind = "zpx"
-		} else if len(tmp) == 4 {
-			inst.kind = "absx"
-		} else {
-			errHandler(errs["operand"], "Bad address.")
-		}
-		inst = parseAddress(tmp, inst)
-	} else if len(op) > 2 && onPeriphery(op, ",y", true) {
-		if onPeriphery(op, "#", false) {
-			errHandler(errs["operand"], "Operand cannot be immediate.")
-		}
-		tmp = removeChars(removePeriphery(op, "", ",y"), modchars)
-		if len(tmp) != 4 {
-			errHandler(errs["operand"], "Bad address.")
-		} else {
-			inst.kind = "absy"
-		}
-		inst = parseAddress(tmp, inst)
-	} else if onPeriphery(op, "#", false) {
-		tmp = removeChars(op, modchars)
-		if len(tmp) != 2 {
-			errHandler(errs["operand"], "Immediate value must be one byte.")
-		} else {
+	if rOperand.MatchString(op) { // is not a label
+		switch {
+		case rImm.MatchString(op):
 			inst.kind = "imm"
+		case rInd.MatchString(op):
+			inst.kind = "ind"
+		case rZp.MatchString(op):
+			inst.kind = "zp"
+		case rZpiy.MatchString(op):
+			inst.kind = "zpiy"
+		case rZpx.MatchString(op):
+			inst.kind = "zpx"
+		case rZpxi.MatchString(op):
+			inst.kind = "zpxi"
+		case rAbs.MatchString(op):
+			inst.kind = "abs"
+		case rAbsx.MatchString(op):
+			inst.kind = "absx"
+		case rAbsy.MatchString(op):
+			inst.kind = "absy"
+		default:
+			errHandler(errs["parser"], "Does not match any operand template.")
 		}
-		inst = parseAddress(tmp, inst)
-	} else {
-		tmp = removeChars(op, modchars)
-		if len(tmp) == 2 {
-			_, ok := opRel[inst.mnemonic]
-			if ok {
-				inst.kind = "rel"
-			} else {
-				inst.kind = "zp"
-			}
-		} else if len(tmp) == 4 {
-			_, ok := opRel[inst.mnemonic]
-			if ok {
-				inst.kind = "rel"
-			} else {
-				inst.kind = "abs"
-			}
-		} else {
-			errHandler(errs["operand"], "Bad address.")
+		inst = parseAddress(rAddr.FindString(op), inst, symbols)
+	} else { // handle labels
+		switch {
+		case rLabelOpAbs.MatchString(op):
+			inst.kind = "abs"
+		case rLabelOpInd.MatchString(op):
+			inst.kind = "ind"
 		}
-		inst = parseAddress(tmp, inst)
+		inst = parseAddress(rLabelSolo.FindString(op), inst, symbols)
 	}
 	return inst
 }
 
-func parseAddress(addr string, inst instruction, label ...bool) instruction {
-	for _, char := range modchars {
-		addr = strings.ReplaceAll(addr, string(char), "")
-	}
-	if !(len(addr) == 2 || len(addr) == 4) {
-		errHandler(errs["operand"], "Address is ill formed.")
-	}
-	bytes, e := hex.DecodeString(addr)
-	if e != nil {
-		errHandler(errs["conversion"])
-	}
-	if len(bytes) == 2 {
-		inst.opHighByte = bytes[0]
-		inst.opLowByte = bytes[1]
-	} else if len(bytes) == 1 {
-		inst.opLowByte = bytes[0]
+func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
+	if rLabelSolo.MatchString(addr) {
+		for _, symbol := range symbols {
+			if symbol.label == addr { // symbol is known from previous pass
+				inst.opHighByte = intToHex(symbol.intAddr)[0]
+				inst.opLowByte = intToHex(symbol.intAddr)[1]
+			}
+		}
 	} else {
-		errHandler(errs["conversion"], "Wrong length of address.")
+		bytes, e := hex.DecodeString(addr)
+		if e != nil {
+			errHandler(errs["conversion"])
+		}
+		if len(bytes) > 1 {
+			inst.opHighByte = bytes[0]
+			inst.opLowByte = bytes[1]
+		} else {
+			inst.opLowByte = bytes[0]
+		}
 	}
 	return inst
 }
@@ -273,66 +234,88 @@ func assignOpcode(inst instruction) instruction {
 				if ok {
 					inst.opcode = opZop[inst.mnemonic]
 					inst.length = 1
+				} else {
+					errHandler(errs["opcode"], "Not a zero-operand instruction.")
 				}
 			case "imm":
 				_, ok = opImm[inst.mnemonic]
 				if ok {
 					inst.opcode = opImm[inst.mnemonic]
 					inst.length = 2
+				} else {
+					errHandler(errs["opcode"], "Not an immediate instruction.")
 				}
 			case "zp":
 				_, ok = opZp[inst.mnemonic]
 				if ok {
 					inst.opcode = opZp[inst.mnemonic]
 					inst.length = 2
+				} else {
+					errHandler(errs["opcode"], "Not a zero-page instruction.")
 				}
 			case "zpx":
 				_, ok = opZpx[inst.mnemonic]
 				if ok {
 					inst.opcode = opZpx[inst.mnemonic]
 					inst.length = 2
+				} else {
+					errHandler(errs["opcode"], "Not a zero-page,X instruction.")
 				}
 			case "abs":
 				_, ok = opAbs[inst.mnemonic]
 				if ok {
 					inst.opcode = opAbs[inst.mnemonic]
 					inst.length = 3
+				} else {
+					errHandler(errs["opcode"], "Not an absolute instruction.")
 				}
 			case "absx":
 				_, ok = opAbsx[inst.mnemonic]
 				if ok {
 					inst.opcode = opAbsx[inst.mnemonic]
 					inst.length = 3
+				} else {
+					errHandler(errs["opcode"], "Not an absolute,X instruction.")
 				}
 			case "absy":
 				_, ok = opAbsy[inst.mnemonic]
 				if ok {
 					inst.opcode = opAbsy[inst.mnemonic]
 					inst.length = 3
+				} else {
+					errHandler(errs["opcode"], "Not an absolute,y instruction.")
 				}
 			case "zpxi":
 				_, ok = opZpxi[inst.mnemonic]
 				if ok {
 					inst.opcode = opZpxi[inst.mnemonic]
 					inst.length = 2
+				} else {
+					errHandler(errs["opcode"], "Not an indexed indirect instruction.")
 				}
 			case "zpiy":
 				_, ok = opZpiy[inst.mnemonic]
 				if ok {
 					inst.opcode = opZpiy[inst.mnemonic]
 					inst.length = 2
+				} else {
+					errHandler(errs["opcode"], "Not an indirect indexed instruction.")
 				}
 			case "ind":
 				_, ok = opInd[inst.mnemonic]
 				if ok {
 					inst.opcode = opInd[inst.mnemonic]
 					inst.length = 3
+				} else {
+					errHandler(errs["opcode"], "Not an indirect instruction.")
 				}
 			case "rel":
 				_, ok = opRel[inst.mnemonic]
 				if ok {
 					inst.opcode = opRel[inst.mnemonic]
 					inst.length = 3
+				} else {
+					errHandler(errs["opcode"], "Not a relative instruction.")
 				}
 			default:
 				errHandler(errs["opcode"])
@@ -379,8 +362,7 @@ func getSymbols(insts []instruction, obj [][]byte, PC int) (symbols []symbol) {
 		if inst.label != "" {
 			var tmp symbol
 			tmp.label = inst.label
-			tmpAddr := [2]byte{inst.opHighByte, inst.opLowByte}
-			tmp.intAddr = hexToInt(tmpAddr) + PC
+			tmp.intAddr = PC
 			tmp.addHighByte = intToHex(tmp.intAddr)[0]
 			tmp.addLowByte = intToHex(tmp.intAddr)[1]
 			symbols = append(symbols, tmp)
@@ -405,7 +387,7 @@ func printAssembly(lines []string, obj [][]byte, symbols []symbol, PC int) {
 		} else {
 			printAtWidth("", 5)
 		}
-		if symbols[symi].intAddr == PC && len(line) > 0 {
+		if len(symbols) > 0 && symbols[symi].intAddr == PC && len(line) > 0 {
 			printAtWidth(symbols[symi].label, 7)
 			if len(symbols)-1 > symi {
 				symi++
@@ -465,23 +447,6 @@ func saveFile(filename string, obj [][]byte) {
 	fmt.Println("\nWrote " + strconv.Itoa(len(tmp)) + " bytes to " + filename + ".")
 }
 
-func onPeriphery(str string, seq string, right bool) bool {
-	if len(seq) <= len(str) {
-		if !right {
-			if str[:len(seq)] == seq {
-				return true
-			}
-		} else {
-			if str[len(str)-len(seq):] == seq {
-				return true
-			}
-		}
-	} else {
-		errHandler(errs["parser"])
-	}
-	return false
-}
-
 func removePeriphery(in string, l string, r string) (out string) {
 	if len(l)+len(r) > len(in) {
 		errHandler(errs["parser"])
@@ -519,9 +484,10 @@ func isDigit(str string) bool {
 
 func hexToInt(addr [2]byte) int {
 	tmp := fmt.Sprintf("%02x%02x", addr[0], addr[1])
-	o, e := strconv.ParseInt(tmp, 16, 16)
+	log.Println(tmp)
+	o, e := strconv.ParseInt(tmp, 16, 64)
 	if e != nil {
-		errHandler(errs["org"])
+		errHandler(errs["conversion"], "Error converting hex to int.")
 	}
 	return int(o)
 }
