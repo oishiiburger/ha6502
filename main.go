@@ -1,4 +1,33 @@
-// Hobbyist's Assembler for 6502 microprocessors
+/* 	Hobbyist's Assembler for 6502 microprocessors
+	A simple assembler for little projects and tinkering
+	See README.md for more information
+
+	-> main.go
+
+=============================================================================
+MIT License
+
+Copyright (c) 2020 Dr. Christopher Graham
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+==============================================================================
+*/
 
 package main
 
@@ -22,7 +51,6 @@ var info = map[string]string{
 
 var continueOnError bool = false
 
-// Each line will get parsed into an instance of line
 type instruction struct {
 	mnemonic   string
 	kind       string
@@ -41,23 +69,18 @@ type symbol struct {
 	intAddr     int
 }
 
+// Consts
 const comchars string = ";*"
 const modchars string = "#$"
 const maxLabelLength int = 6
 
+// Globals
 var filename string
 var ofilename string
-
-var passCount int = 1
-
 var curLine int = 0 // set to 0 when not testing
 var symbols []symbol
-var curObj [][]byte
-var curOrg int = 0
 
-var pass1Insts []instruction
-var pass2Insts []instruction
-
+// For error handling
 var errs = map[string][]string{
 	"conversion":  {"Hex to byte", "Could not complete conversion."},
 	"file":        {"File I/O", "Could not read or write to file."},
@@ -75,24 +98,33 @@ func main() {
 	ofilename = "./files/out.o"
 	lines := loadFile(filename)
 
-	for i, line := range lines { // pass 1 instruction check
+	var pass1Inst []instruction
+	var pass2Inst []instruction
+
+	var org int = 0
+
+	var objectCode [][]byte
+
+	pass1Inst = runPass(lines, pass1Inst)
+
+	org = setOrg(pass1Inst)
+	getSymbols(pass1Inst, org)
+
+	pass2Inst = runPass(lines, pass2Inst)
+
+	objectCode = asmObject(pass2Inst)
+
+	printAssembly(lines, objectCode, org)
+	printSymbolTable()
+	saveFile(ofilename, objectCode)
+}
+
+func runPass(lines []string, insts []instruction) []instruction {
+	for i, line := range lines {
 		curLine = i
-		pass1Insts = append(pass1Insts, parseLine(line))
+		insts = append(insts, parseLine(line))
 	}
-
-	curOrg = setOrg(pass1Insts)
-	symbols = getSymbols(pass1Insts, curObj, curOrg)
-
-	for i, line := range lines { // pass 2 instruction check
-		curLine = i
-		pass2Insts = append(pass2Insts, parseLine(line))
-	}
-
-	curObj = asmObject(pass2Insts)
-
-	printAssembly(lines, curObj, symbols, curOrg)
-	printSymbolTable(symbols)
-	saveFile(ofilename, curObj)
+	return insts
 }
 
 func loadFile(filename string) (lines []string) {
@@ -356,7 +388,7 @@ func setOrg(insts []instruction) (org int) {
 	return 0
 }
 
-func getSymbols(insts []instruction, obj [][]byte, PC int) (symbols []symbol) {
+func getSymbols(insts []instruction, PC int) {
 	for i, inst := range insts {
 		curLine = i
 		if inst.label != "" {
@@ -371,10 +403,9 @@ func getSymbols(insts []instruction, obj [][]byte, PC int) (symbols []symbol) {
 			PC += inst.length
 		}
 	}
-	return symbols
 }
 
-func printAssembly(lines []string, obj [][]byte, symbols []symbol, PC int) {
+func printAssembly(lines []string, obj [][]byte, PC int) {
 	// addr | sym | ops | line | file
 	// 5	  7	    10    7      no limit
 	var symi int = 0
@@ -409,7 +440,7 @@ func printAssembly(lines []string, obj [][]byte, symbols []symbol, PC int) {
 	}
 }
 
-func printSymbolTable(symbols []symbol) {
+func printSymbolTable() {
 	var colWidth int = 60
 	var runWidth int = 0
 	printAtWidth("\nSymbol Table ", 75, "=")
