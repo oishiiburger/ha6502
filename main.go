@@ -45,7 +45,6 @@ import (
 
 var info = map[string]string{
 	"title":      "Hobbyist's Assembler for 6502 microprocessors",
-	"copyright":  "(c) 2020 Dr. Christopher Graham",
 	"github":     "https://github.com/oishiiburger/ha6502",
 	"shortTitle": "ha6502",
 }
@@ -80,31 +79,18 @@ var filename string
 var ofilename string
 var curLine int = 0 // set to 0 when not testing
 var org int = 0
+var pass int = 1
 var symbols []symbol
-
-// For error handling
-var errs = map[string][]string{
-	"conversion":  {"Hex to byte", "Could not complete conversion."},
-	"file":        {"File I/O", "Could not read or write to file."},
-	"label":       {"Label", "Could not parse label."},
-	"labelLength": {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
-	"mnemonic":    {"Mnemonic", "Could not find a valid mnemonic."},
-	"opcode":      {"Opcode", "Invalid mnemonic/operand combination."},
-	"operand":     {"Operand", "The operand is ill formed."},
-	"org":         {"Org", "Pseudo-op address could not be determined."},
-	"parser":      {"Parser", "Could not parse line successfully."},
-	"relative":    {"Branching", "Relative address is out of range."},
-	"space":       {"Memory", "Object will not fit in address space."},
-	"symbol":      {"Symbol", "Could not determine symbol address."}}
+var lines []string
 
 func main() {
-	fmt.Println(info["title"] + "\n" + info["copyright"] + "\n" + info["github"])
-	filename = "./files/test.s"
-	ofilename = "./files/out.o"
-	lines := loadFile(filename)
-
 	var pass1Inst []instruction
 	var pass2Inst []instruction
+
+	fmt.Println(info["title"] + "\n" + info["github"])
+	filename = "./files/test.s"
+	ofilename = "./files/out.o"
+	lines = loadFile(filename)
 
 	var objectCode [][]byte
 
@@ -112,7 +98,8 @@ func main() {
 
 	org = setOrg(pass1Inst)
 	getSymbols(pass1Inst)
-	// run through relative insts?
+
+	pass = 2
 
 	pass2Inst = runPass(lines, pass2Inst)
 
@@ -157,8 +144,8 @@ func parseLine(line string) (cur instruction) {
 	cur.isComment = false
 	lineArr := strings.Fields(line)
 	if len(lineArr) > 0 && len(lineArr) < 4 {
-		if rLabel.MatchString(lineArr[0]) {
-			cur.label = lineArr[0]
+		if rLabelCol.MatchString(lineArr[0]) {
+			cur.label = strings.ReplaceAll(lineArr[0], ":", "")
 			if len(cur.label) > maxLabelLength {
 				errHandler(errs["labelLength"])
 			}
@@ -167,6 +154,7 @@ func parseLine(line string) (cur instruction) {
 					cur.mnemonic = lineArr[1]
 					if len(lineArr) == 2 {
 						cur.kind = "zop"
+						cur.length = 1
 					}
 				} else {
 					errHandler(errs["mnemonic"])
@@ -180,9 +168,10 @@ func parseLine(line string) (cur instruction) {
 				cur.mnemonic = lineArr[0]
 				if len(lineArr) == 1 {
 					cur.kind = "zop"
+					cur.length = 1
 				}
 			} else {
-				errHandler(errs["mnemonic"])
+				errHandler(errs["mnemonic"], "(Is there an ill-formed label?)")
 			}
 			if len(lineArr) > 1 {
 				cur = parseOperand(lineArr[1], cur)
@@ -201,26 +190,39 @@ func parseOperand(op string, inst instruction) instruction {
 		switch {
 		case rImm.MatchString(op):
 			inst.kind = "imm"
+			inst.length = 2
 		case rInd.MatchString(op):
 			inst.kind = "ind"
+			inst.length = 3
 		case rZp.MatchString(op):
 			inst.kind = "zp"
-		case rZpiy.MatchString(op):
-			inst.kind = "zpiy"
+			inst.length = 2
 		case rZpx.MatchString(op):
 			inst.kind = "zpx"
+			inst.length = 2
+		case rZpy.MatchString(op):
+			inst.kind = "zpy"
+			inst.length = 2
+		case rZpiy.MatchString(op):
+			inst.kind = "zpiy"
+			inst.length = 2
 		case rZpxi.MatchString(op):
 			inst.kind = "zpxi"
+			inst.length = 2
 		case rAbs.MatchString(op):
 			if _, ok := opRel[inst.mnemonic]; ok { // check if actually a relative instruction (branches)
 				inst.kind = "rel"
+				inst.length = 2
 			} else {
 				inst.kind = "abs"
+				inst.length = 3
 			}
 		case rAbsx.MatchString(op):
 			inst.kind = "absx"
+			inst.length = 3
 		case rAbsy.MatchString(op):
 			inst.kind = "absy"
+			inst.length = 3
 		default:
 			errHandler(errs["parser"], "Does not match any operand template.")
 		}
@@ -230,11 +232,14 @@ func parseOperand(op string, inst instruction) instruction {
 		case rLabelOpAbs.MatchString(op):
 			if _, ok := opRel[inst.mnemonic]; ok { // check if actually a relative instruction (branches)
 				inst.kind = "rel"
+				inst.length = 2
 			} else {
 				inst.kind = "abs"
+				inst.length = 3
 			}
 		case rLabelOpInd.MatchString(op):
 			inst.kind = "ind"
+			inst.length = 3
 		}
 		found := rLabel.FindString(op)
 		if len(found) > 0 {
@@ -250,8 +255,13 @@ func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
 	if rLabel.MatchString(addr) {
 		for _, symbol := range symbols {
 			if symbol.label == addr { // symbol is known from previous pass
-				inst.opHighByte = intToHex(symbol.intAddr)[0]
-				inst.opLowByte = intToHex(symbol.intAddr)[1]
+				bytes := intToHex(symbol.intAddr)
+				if len(bytes) > 1 {
+					inst.opHighByte = bytes[0]
+					inst.opLowByte = bytes[1]
+				} else {
+					inst.opLowByte = bytes[0]
+				}
 			}
 		}
 	} else {
@@ -259,30 +269,32 @@ func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
 		if e != nil {
 			errHandler(errs["conversion"])
 		}
-		if len(bytes) > 1 {
-			inst.opHighByte = bytes[0]
-			inst.opLowByte = bytes[1]
+		if len(addr)/2 != inst.length-1 && inst.kind != "rel" {
+			errHandler(errs["length"], "Expected "+strconv.Itoa(inst.length-1)+" bytes for "+inst.mnemonic+".")
 		} else {
-			inst.opLowByte = bytes[0]
+			if len(bytes) > 1 {
+				inst.opHighByte = bytes[0]
+				inst.opLowByte = bytes[1]
+			} else {
+				inst.opLowByte = bytes[0]
+			}
 		}
 	}
 	return inst
 }
 
 func assignOpcode(inst instruction) instruction {
-	if !inst.isComment {
+	if !inst.isComment && inst.mnemonic != "" {
 		_, ok := pseudoOps[inst.mnemonic]
 		if ok {
 			inst.kind = "pse"
 			inst.isComment = true // set pseudo-ops to comments
-			inst.length = 3
 		} else {
 			switch inst.kind {
 			case "zop":
 				_, ok = opZop[inst.mnemonic]
 				if ok {
 					inst.opcode = opZop[inst.mnemonic]
-					inst.length = 1
 				} else {
 					errHandler(errs["opcode"], "Not a zero-operand instruction.")
 				}
@@ -290,7 +302,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opImm[inst.mnemonic]
 				if ok {
 					inst.opcode = opImm[inst.mnemonic]
-					inst.length = 2
 				} else {
 					errHandler(errs["opcode"], "Not an immediate instruction.")
 				}
@@ -298,7 +309,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opZp[inst.mnemonic]
 				if ok {
 					inst.opcode = opZp[inst.mnemonic]
-					inst.length = 2
 				} else {
 					errHandler(errs["opcode"], "Not a zero-page instruction.")
 				}
@@ -306,15 +316,20 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opZpx[inst.mnemonic]
 				if ok {
 					inst.opcode = opZpx[inst.mnemonic]
-					inst.length = 2
 				} else {
 					errHandler(errs["opcode"], "Not a zero-page,X instruction.")
+				}
+			case "zpy":
+				_, ok = opZpy[inst.mnemonic]
+				if ok {
+					inst.opcode = opZpy[inst.mnemonic]
+				} else {
+					errHandler(errs["opcode"], "Not a zero-page,Y instruction.")
 				}
 			case "abs":
 				_, ok = opAbs[inst.mnemonic]
 				if ok {
 					inst.opcode = opAbs[inst.mnemonic]
-					inst.length = 3
 				} else {
 					errHandler(errs["opcode"], "Not an absolute instruction.")
 				}
@@ -322,7 +337,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opAbsx[inst.mnemonic]
 				if ok {
 					inst.opcode = opAbsx[inst.mnemonic]
-					inst.length = 3
 				} else {
 					errHandler(errs["opcode"], "Not an absolute,X instruction.")
 				}
@@ -330,7 +344,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opAbsy[inst.mnemonic]
 				if ok {
 					inst.opcode = opAbsy[inst.mnemonic]
-					inst.length = 3
 				} else {
 					errHandler(errs["opcode"], "Not an absolute,y instruction.")
 				}
@@ -338,7 +351,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opZpxi[inst.mnemonic]
 				if ok {
 					inst.opcode = opZpxi[inst.mnemonic]
-					inst.length = 2
 				} else {
 					errHandler(errs["opcode"], "Not an indexed indirect instruction.")
 				}
@@ -346,7 +358,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opZpiy[inst.mnemonic]
 				if ok {
 					inst.opcode = opZpiy[inst.mnemonic]
-					inst.length = 2
 				} else {
 					errHandler(errs["opcode"], "Not an indirect indexed instruction.")
 				}
@@ -354,7 +365,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opInd[inst.mnemonic]
 				if ok {
 					inst.opcode = opInd[inst.mnemonic]
-					inst.length = 3
 				} else {
 					errHandler(errs["opcode"], "Not an indirect instruction.")
 				}
@@ -362,7 +372,6 @@ func assignOpcode(inst instruction) instruction {
 				_, ok = opRel[inst.mnemonic]
 				if ok {
 					inst.opcode = opRel[inst.mnemonic]
-					inst.length = 3
 				} else {
 					errHandler(errs["opcode"], "Not a relative instruction.")
 				}
@@ -391,11 +400,15 @@ func asmObject(insts []instruction) (obj [][]byte) {
 				var tmpAddr = [2]byte{inst.opHighByte, inst.opLowByte}
 				var intTmpAddr = hexToInt(tmpAddr)
 				if intTmpAddr > PC { // relative branch is positive
-					diff := intTmpAddr - (PC + 3)
+					diff := intTmpAddr - (PC + 2)
 					if diff > 127 {
 						errHandler(errs["relative"], "Positive offset greater than 127.")
 					} else {
-						tmp = append(tmp, intToHex(diff)[1]) // low byte
+						if diff <= 255 {
+							tmp = append(tmp, intToHex(diff)[0]) // low byte
+						} else {
+							tmp = append(tmp, intToHex(diff)[1]) // low byte
+						}
 						PC += 2
 					}
 				} else { // relative branch is negative
@@ -404,7 +417,11 @@ func asmObject(insts []instruction) (obj [][]byte) {
 					if diff < 127 {
 						errHandler(errs["relative"], "Negative offset greater than -128.")
 					} else {
-						tmp = append(tmp, intToHex(diff)[1]) // low byte
+						if diff <= 255 {
+							tmp = append(tmp, intToHex(diff)[0]) // low byte
+						} else {
+							tmp = append(tmp, intToHex(diff)[1]) // low byte
+						}
 						PC += 2
 					}
 				}
@@ -444,8 +461,13 @@ func getSymbols(insts []instruction) {
 			var tmp symbol
 			tmp.label = inst.label
 			tmp.intAddr = PC
-			tmp.addHighByte = intToHex(tmp.intAddr)[0]
-			tmp.addLowByte = intToHex(tmp.intAddr)[1]
+			tmpAddr := intToHex(tmp.intAddr)
+			if tmp.intAddr <= 255 {
+				tmp.addLowByte = tmpAddr[0]
+			} else {
+				tmp.addHighByte = tmpAddr[0]
+				tmp.addLowByte = tmpAddr[1]
+			}
 			symbols = append(symbols, tmp)
 		}
 		if !inst.isComment && !(inst.kind == "pse") {
@@ -489,7 +511,7 @@ func printAssembly(lines []string, obj [][]byte) {
 			PC += len(line)
 		}
 	}
-	fmt.Printf("\nObject will fill from $%04X to $%04X. ($%04X bytes)\n", PCStart, PC, PC-PCStart)
+	fmt.Printf("\nObject will fill from $%04X through $%04X. ($%04X bytes)\n", PCStart, PC-1, PC-PCStart)
 }
 
 func printSymbolTable() {
@@ -530,20 +552,6 @@ func saveFile(filename string, obj [][]byte) {
 	fmt.Println("\n\nWrote " + strconv.Itoa(len(tmp)) + " bytes to " + filename + ".")
 }
 
-func removePeriphery(in string, l string, r string) (out string) {
-	if len(l)+len(r) > len(in) {
-		errHandler(errs["parser"])
-	}
-	return in[len(l) : len(in)-len(r)]
-}
-
-func removeChars(in string, chars string) string {
-	for _, char := range chars {
-		in = strings.ReplaceAll(in, string(char), "")
-	}
-	return in
-}
-
 func isMnemonic(str string) bool {
 	str = strings.ToLower(str)
 	_, ok := mnemonics[str]
@@ -552,14 +560,6 @@ func isMnemonic(str string) bool {
 	}
 	_, ok = pseudoOps[str]
 	if ok {
-		return true
-	}
-	return false
-}
-
-func isDigit(str string) bool {
-	var digits string = "0123456789"
-	if strings.ContainsAny(str, digits) {
 		return true
 	}
 	return false
@@ -575,7 +575,12 @@ func hexToInt(addr [2]byte) int {
 }
 
 func intToHex(addr int) []byte {
-	str := fmt.Sprintf("%04x", addr)
+	var str string
+	if addr <= 255 {
+		str = fmt.Sprintf("%02x", addr)
+	} else {
+		str = fmt.Sprintf("%04x", addr)
+	}
 	tmp, _ := hex.DecodeString(str)
 	return tmp
 }
@@ -596,29 +601,33 @@ func printAtWidth(str string, wid int, filler ...string) (length int) {
 }
 
 func errHandler(err []string, deets ...string) {
-	fmt.Println("\n" + strings.Repeat("=", 40))
-	tmp := "ERROR: " + err[0]
-	var num string
-	if curLine != 0 {
-		num = "Line " + strconv.Itoa(curLine)
-	} else {
-		num = ""
-	}
-	length := len(tmp) + len(num)
-	if length < 40 {
-		color.FgRed.Println(tmp + strings.Repeat(" ", 40-length) + num)
-	} else {
-		color.FgRed.Println(tmp + " " + num)
-	}
-	color.FgDefault.Println(err[1])
+	color.FgRed.Print("\nERROR ")
+	color.FgDefault.Print("line " + strconv.Itoa(curLine+1) + ": ")
+	fmt.Println(strings.Split(strings.Split(strings.TrimSpace(lines[curLine]), "*")[0], ";")[0])
+	fmt.Println(err[1])
 	if len(deets) > 0 {
 		fmt.Println(deets[0])
 	}
-	fmt.Println(strings.Repeat("=", 40) + "\n")
 	if !continueOnError {
 		os.Exit(1)
 	}
 }
+
+// For error handling
+var errs = map[string][]string{
+	"conversion":  {"Hex to byte", "Could not complete conversion."},
+	"file":        {"File I/O", "Could not read or write to file."},
+	"label":       {"Label", "Address too short or cannot parse label."},
+	"labelLength": {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
+	"length":      {"Address length", "Address length does not match opcode."},
+	"mnemonic":    {"Mnemonic", "Could not find a valid mnemonic."},
+	"opcode":      {"Opcode", "Invalid mnemonic/operand combination."},
+	"operand":     {"Operand", "The operand is ill formed."},
+	"org":         {"Org", "Pseudo-op address could not be determined."},
+	"parser":      {"Parser", "Could not parse line successfully."},
+	"relative":    {"Branching", "Relative address is out of range."},
+	"space":       {"Memory", "Object will not fit in address space."},
+	"symbol":      {"Symbol", "Could not determine symbol address."}}
 
 func testPrint(inst instruction) {
 	fmt.Println("Instruction")
@@ -628,6 +637,7 @@ func testPrint(inst instruction) {
 	} else {
 		fmt.Println("Mnemonic: " + inst.mnemonic)
 		fmt.Println("Kind:     " + inst.kind)
+		fmt.Printf("Length    %x\n", inst.length)
 		fmt.Printf("Opcode:   %x\n", inst.opcode)
 		fmt.Printf("Add HB    %x\n", inst.opHighByte)
 		fmt.Printf("Add LB    %x\n", inst.opLowByte)
