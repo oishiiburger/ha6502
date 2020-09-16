@@ -62,6 +62,7 @@ var pseudoOps = map[string]string{
 	"equ": "Store an address in a symbol", // not yet implemented
 	"org": "Set start address for program"}
 
+// including descriptions for a potential educational feature
 var mnemonics = map[string]string{
 	"adc": "Add memory to accumulator with carry",
 	"bcc": "Branch on carry clear",

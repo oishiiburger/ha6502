@@ -1,7 +1,7 @@
 Hobbyist's Assembler for 6502 microprocessors
 =============================================
 
-This is a simple 2-pass assembler. Features are still being added and the instruction set is not yet complete. It's not efficient, but it's fun to tinker with.
+This is a simple 2-pass assembler. Features are still being added. It's not efficient, but it's fun to tinker with.
 
 ## Features
 * Labels for automated addressing

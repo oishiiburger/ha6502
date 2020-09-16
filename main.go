@@ -274,7 +274,6 @@ func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
 			errHandler(errs["length"], "Expected "+strconv.Itoa(inst.length-1)+" bytes for "+inst.mnemonic+".")
 		} else {
 			if len(bytes) > 1 {
-				testPrint(inst)
 				inst.opHighByte = bytes[0]
 				inst.opLowByte = bytes[1]
 			} else {
@@ -302,38 +301,6 @@ func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
 	}
 	return inst
 }
-
-// 	bytes, e := hex.DecodeString(addr)
-// 	if e != nil {
-// 		if rLabel.MatchString(addr) {
-// 			for _, symbol := range symbols {
-// 				if symbol.label == addr { // symbol is known from previous pass
-// 					bytes := intToHex(symbol.intAddr)
-// 					if len(bytes) > 1 {
-// 						inst.opHighByte = bytes[0]
-// 						inst.opLowByte = bytes[1]
-// 					} else {
-// 						inst.opLowByte = bytes[0]
-// 					}
-// 				}
-// 			}
-// 		} else {
-// 			errHandler(errs["conversion"])
-// 		}
-// 	}
-// 	if len(addr)/2 != inst.length-1 && inst.kind != "rel" {
-// 		errHandler(errs["length"], "Expected "+strconv.Itoa(inst.length-1)+" bytes for "+inst.mnemonic+".")
-// 	} else {
-// 		if len(bytes) > 1 {
-// 			testPrint(inst)
-// 			inst.opHighByte = bytes[0]
-// 			inst.opLowByte = bytes[1]
-// 		} else {
-// 			inst.opLowByte = bytes[0]
-// 		}
-// 	}
-// 	return inst
-// }
 
 func assignOpcode(inst instruction) instruction {
 	if !inst.isComment && inst.mnemonic != "" {
