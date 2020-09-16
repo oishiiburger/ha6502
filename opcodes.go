@@ -92,9 +92,31 @@ var mnemonics = map[string]string{
 	"jsr": "Jump to new location saving return address",
 	"lda": "Load accumulator with memory",
 	"ldx": "Load index X with memory",
-
+	"ldy": "Load index Y with memory",
+	"lsr": "Shift right one bit (memory or accumulator)",
 	"nop": "No operation",
-	"pha": "Push accumulator on stack"}
+	"ora": "'OR' memory with accumulator",
+	"pha": "Push accumulator on stack",
+	"php": "Push processor status on stack",
+	"pla": "Pull accumulator from stack",
+	"plp": "Pull processor status from stack",
+	"rol": "Rotate one bit left (memory or accumulator)",
+	"ror": "Rotate one bit right (memory or accumulator)",
+	"rti": "Return from interrupt",
+	"rts": "Return from subroutine",
+	"sbc": "Subtract memory from accumulator with borrow",
+	"sec": "Set carry flag",
+	"sed": "Set decimal mode",
+	"sei": "Set interrupt disable status",
+	"sta": "Store accumulator in memory",
+	"stx": "Store index X in memory",
+	"sty": "Store index Y in memory",
+	"tax": "Transfer accumulator to index X",
+	"tay": "Transfer accumulator to index Y",
+	"tsx": "Transfer stack pointer to index X",
+	"txa": "Transfer index X to accumulator",
+	"txs": "Transfer index X to stack pointer",
+	"tya": "Transfer index Y to accumulator"}
 
 var opZop = map[string]byte{
 	"brk": 0x00,
@@ -106,8 +128,25 @@ var opZop = map[string]byte{
 	"dey": 0x88,
 	"inx": 0xe8,
 	"iny": 0xc8,
+	"lsr": 0x4a,
 	"nop": 0xea,
-	"pha": 0x48}
+	"pha": 0x48,
+	"php": 0x08,
+	"pla": 0x68,
+	"plp": 0x28,
+	"rol": 0x2a,
+	"ror": 0x6a,
+	"rti": 0x40,
+	"rts": 0x60,
+	"sec": 0x38,
+	"sed": 0xf8,
+	"sei": 0x78,
+	"tax": 0xaa,
+	"tay": 0xa8,
+	"tsx": 0xba,
+	"txa": 0x8a,
+	"txs": 0x9a,
+	"tya": 0x98}
 
 var opImm = map[string]byte{
 	"adc": 0x69,
@@ -116,7 +155,10 @@ var opImm = map[string]byte{
 	"cpy": 0xc0,
 	"eor": 0x49,
 	"lda": 0xa9,
-	"ldx": 0xa2}
+	"ldx": 0xa2,
+	"ldy": 0xa0,
+	"ora": 0x09,
+	"sbc": 0xe9}
 
 var opZp = map[string]byte{
 	"adc": 0x65,
@@ -128,7 +170,16 @@ var opZp = map[string]byte{
 	"eor": 0x45,
 	"inc": 0xe6,
 	"lda": 0xa5,
-	"ldx": 0xa6}
+	"ldx": 0xa6,
+	"ldy": 0xa4,
+	"lsr": 0x46,
+	"ora": 0x05,
+	"rol": 0x26,
+	"ror": 0x66,
+	"sbc": 0xe5,
+	"sta": 0x85,
+	"stx": 0x86,
+	"sty": 0x84}
 
 var opZpx = map[string]byte{
 	"adc": 0x75,
@@ -136,7 +187,16 @@ var opZpx = map[string]byte{
 	"dec": 0xd6,
 	"eor": 0x55,
 	"inc": 0xf6,
-	"lda": 0xb5}
+	"lda": 0xb5,
+	"ldy": 0xb4,
+	"lsr": 0x56,
+	"ora": 0x15,
+	"rol": 0x36,
+	"ror": 0x76,
+	"sbc": 0xf5,
+	"sta": 0x95,
+	"stx": 0x96,
+	"sty": 0x94}
 
 var opZpy = map[string]byte{
 	"ldx": 0xb6}
@@ -153,7 +213,16 @@ var opAbs = map[string]byte{
 	"jmp": 0x4c,
 	"jsr": 0x20,
 	"lda": 0xad,
-	"ldx": 0xae}
+	"ldx": 0xae,
+	"ldy": 0xac,
+	"lsr": 0x4e,
+	"ora": 0x0d,
+	"rol": 0x2e,
+	"ror": 0x6e,
+	"sbc": 0xed,
+	"sta": 0x8d,
+	"stx": 0x8e,
+	"sty": 0x8c}
 
 var opAbsx = map[string]byte{
 	"adc": 0x7d,
@@ -161,26 +230,42 @@ var opAbsx = map[string]byte{
 	"dec": 0xde,
 	"eor": 0x5d,
 	"inc": 0xfe,
-	"lda": 0xbd}
+	"lda": 0xbd,
+	"ldy": 0xbc,
+	"lsr": 0x5e,
+	"ora": 0x1d,
+	"rol": 0x3e,
+	"ror": 0x7e,
+	"sbc": 0xfd,
+	"sta": 0x9d}
 
 var opAbsy = map[string]byte{
 	"adc": 0x79,
 	"cmp": 0xd9,
 	"eor": 0x59,
 	"lda": 0xb9,
-	"ldx": 0xbe}
+	"ldx": 0xbe,
+	"ora": 0x19,
+	"sbc": 0xf9,
+	"sta": 0x99}
 
 var opZpxi = map[string]byte{
 	"adc": 0x61,
 	"cmp": 0xc1,
 	"eor": 0x41,
-	"lda": 0xa1}
+	"lda": 0xa1,
+	"ora": 0x01,
+	"sbc": 0xe1,
+	"sta": 0x81}
 
 var opZpiy = map[string]byte{
 	"adc": 0x71,
 	"cmp": 0xd1,
 	"eor": 0x51,
-	"lda": 0xb1}
+	"lda": 0xb1,
+	"ora": 0x11,
+	"sbc": 0xf1,
+	"sta": 0x91}
 
 var opInd = map[string]byte{
 	"jmp": 0x6c}
