@@ -99,7 +99,7 @@ func main() {
 	org = setOrg(pass1Inst)
 	getSymbols(pass1Inst)
 
-	pass = 2
+	pass++
 
 	pass2Inst = runPass(lines, pass2Inst)
 
@@ -224,7 +224,9 @@ func parseOperand(op string, inst instruction) instruction {
 			inst.kind = "absy"
 			inst.length = 3
 		default:
-			if !(len(op) == 2 || len(op) == 4) {
+			if len(op) > 4 {
+				errHandler(errs["parser"], "Operand/address is ill formed or does not match template.")
+			} else if !(len(op) == 2 || len(op) == 4) {
 				errHandler(errs["parser"], "Address is not 2 or 4 characters.")
 			} else {
 				errHandler(errs["parser"], "Does not match any operand template.")
@@ -235,6 +237,9 @@ func parseOperand(op string, inst instruction) instruction {
 		switch {
 		// improvements needed: check if symbols known; if so, check addresses for ZP
 		case rLabelOpAbs.MatchString(op):
+			if !symbolExists(op) {
+				errHandler(errs["unknownsym"])
+			}
 			if _, ok := opRel[inst.mnemonic]; ok { // check if actually a relative instruction (branches)
 				inst.kind = "rel"
 				inst.length = 2
@@ -270,7 +275,7 @@ func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
 		if e != nil {
 			errHandler(errs["conversion"])
 		}
-		if len(addr)/2 != inst.length-1 && inst.kind != "rel" {
+		if len(addr)/2 != inst.length-1 && addr[:2] != "00" && inst.kind != "rel" {
 			errHandler(errs["length"], "Expected "+strconv.Itoa(inst.length-1)+" bytes for "+inst.mnemonic+".")
 		} else {
 			if len(bytes) > 1 {
@@ -431,6 +436,7 @@ func asmObject(insts []instruction) (obj [][]byte) {
 						PC += 2
 					}
 				} else { // relative branch is negative
+					testPrint(inst)
 					diff := (PC + 1) - intTmpAddr
 					diff = 255 - diff
 					if diff < 127 {
@@ -604,6 +610,18 @@ func intToHex(addr int) []byte {
 	return tmp
 }
 
+func symbolExists(sym string) bool {
+	if pass < 2 {
+		return true // all symbols unknown on pass 1
+	}
+	for _, symbol := range symbols {
+		if sym == symbol.label {
+			return true
+		}
+	}
+	return false
+}
+
 func printAtWidth(str string, wid int, filler ...string) (length int) {
 	var tmp string
 	var fill string = " "
@@ -621,7 +639,7 @@ func printAtWidth(str string, wid int, filler ...string) (length int) {
 
 func errHandler(err []string, deets ...string) {
 	color.FgRed.Print("\nERROR ")
-	color.FgDefault.Print("line " + strconv.Itoa(curLine+1) + ": ")
+	color.FgDefault.Print("[line " + strconv.Itoa(curLine+1) + "] ")
 	fmt.Println(strings.Split(strings.Split(strings.TrimSpace(lines[curLine]), "*")[0], ";")[0])
 	fmt.Println(err[1])
 	if len(deets) > 0 {
@@ -636,7 +654,7 @@ func errHandler(err []string, deets ...string) {
 var errs = map[string][]string{
 	"conversion":  {"Hex to byte", "Could not complete conversion."},
 	"file":        {"File I/O", "Could not read or write to file."},
-	"label":       {"Label", "Address too short or cannot parse label."},
+	"label":       {"Label", "Operand too short or cannot parse label."},
 	"labelLength": {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
 	"length":      {"Address length", "Address length does not match opcode."},
 	"mnemonic":    {"Mnemonic", "Could not find a valid mnemonic."},
@@ -646,7 +664,8 @@ var errs = map[string][]string{
 	"parser":      {"Parser", "Could not parse line successfully."},
 	"relative":    {"Branching", "Relative address is out of range."},
 	"space":       {"Memory", "Object will not fit in address space."},
-	"symbol":      {"Symbol", "Could not determine symbol address."}}
+	"symbol":      {"Symbol", "Could not determine symbol address."},
+	"unknownsym":  {"Symbol", "Symbol not defined."}}
 
 func testPrint(inst instruction) {
 	fmt.Println("Instruction")

@@ -45,7 +45,7 @@ var rZpy = regexp.MustCompile(`^[$]?[0-9a-f]{2},y$`)
 var rAbs = regexp.MustCompile(`^[$]?[0-9a-f]{4}$`)
 var rAbsx = regexp.MustCompile(`^[$]?[0-9a-f]{4},x$`)
 var rAbsy = regexp.MustCompile(`^[$]?[0-9a-f]{4},y$`)
-var rZpxi = regexp.MustCompile(`^[(][$]?[0-9a-f]{2},x[])]$`)
+var rZpxi = regexp.MustCompile(`^[(][$]?(00)?[0-9a-f]{2},x[])]$`)
 var rZpiy = regexp.MustCompile(`^[(][$]?[0-9a-f]{2}[)],y$`)
 var rInd = regexp.MustCompile(`^[(][$]?[0-9a-f]{2,4}[)]$`)
 
