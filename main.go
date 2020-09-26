@@ -96,7 +96,7 @@ func main() {
 
 	pass1Inst = runPass(lines, pass1Inst)
 
-	org = setOrg(pass1Inst)
+	getOrg(pass1Inst)
 	getSymbols(pass1Inst)
 
 	pass++
@@ -127,6 +127,7 @@ func loadFile(filename string) (lines []string) {
 	return lines
 }
 
+// Parses each line. Strips comments. Checks for labels and assigns mnemonics. Handles pseudo-ops.
 func parseLine(line string) (cur instruction) {
 	if len(line) == 0 { // ignore blank lines
 		cur.isComment = true
@@ -151,7 +152,7 @@ func parseLine(line string) (cur instruction) {
 			}
 			if len(lineArr) > 1 {
 				if isMnemonic(lineArr[1]) { // mnemonic, label
-					cur.mnemonic = lineArr[1]
+					cur.mnemonic = strings.ToLower(lineArr[1])
 					if len(lineArr) == 2 {
 						cur.kind = "zop"
 						cur.length = 1
@@ -163,9 +164,37 @@ func parseLine(line string) (cur instruction) {
 					cur = parseOperand(lineArr[2], cur)
 				}
 			}
+		} else if rLabel.MatchString(lineArr[0]) && !isMnemonic(lineArr[0]) { // Pseudo-ops
+			if pass == 1 {
+				if len(lineArr) > 1 && isMnemonic(lineArr[1]) { // pseudoop mnemonic, label
+					cur.mnemonic = strings.ToLower(lineArr[1])
+					cur.kind = "pse"
+					cur.isComment = true
+					if len(lineArr) != 3 {
+						errHandler(errs["parser"], "Pseudo-op is missing arguments.")
+					} else {
+						cur = parseAddress(rAddr.FindString(lineArr[2]), cur, symbols)
+						if cur.mnemonic == "equ" {
+							// load the equate label into the symbol table with the operand address
+							var tmp symbol
+							tmp.label = lineArr[0]
+							if symbolExists(tmp.label) {
+								errHandler(errs["duplicatesym"])
+							}
+							tmp.addHighByte = cur.opHighByte
+							tmp.addLowByte = cur.opLowByte
+							var tmpAddr = [2]byte{tmp.addHighByte, tmp.addLowByte}
+							tmp.intAddr = hexToInt(tmpAddr)
+							symbols = append(symbols, tmp)
+						}
+					}
+				} else {
+					errHandler(errs["mnemonic"], "Expected a pseudo-op.")
+				}
+			}
 		} else {
 			if isMnemonic(lineArr[0]) { // mnemonic, no label
-				cur.mnemonic = lineArr[0]
+				cur.mnemonic = strings.ToLower(lineArr[0])
 				if len(lineArr) == 1 {
 					cur.kind = "zop"
 					cur.length = 1
@@ -186,7 +215,7 @@ func parseLine(line string) (cur instruction) {
 
 func parseOperand(op string, inst instruction) instruction {
 	op = strings.ToLower(op)
-	if rOperand.MatchString(op) { // is not a label
+	if rOperand.MatchString(op) && !symbolExists(op) { // is not a label
 		switch {
 		case rImm.MatchString(op):
 			inst.kind = "imm"
@@ -236,8 +265,9 @@ func parseOperand(op string, inst instruction) instruction {
 	} else { // handle labels
 		switch {
 		// improvements needed: check if symbols known; if so, check addresses for ZP
+		// add handling of equates in indirect instructions
 		case rLabelOpAbs.MatchString(op):
-			if !symbolExists(op) {
+			if !symbolExists(op) && pass > 1 {
 				errHandler(errs["unknownsym"])
 			}
 			if _, ok := opRel[inst.mnemonic]; ok { // check if actually a relative instruction (branches)
@@ -270,12 +300,12 @@ func parseOperand(op string, inst instruction) instruction {
 }
 
 func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
-	if rAddr.MatchString(addr) { // if it looks like an address
+	if rAddr.MatchString(addr) && !symbolExists(addr) { // if it looks like an address and is not a known symbol
 		bytes, e := hex.DecodeString(addr)
 		if e != nil {
 			errHandler(errs["conversion"])
 		}
-		if len(addr)/2 != inst.length-1 && addr[:2] != "00" && inst.kind != "rel" {
+		if len(addr)/2 != inst.length-1 && addr[:2] != "00" && inst.kind != "rel" && inst.kind != "pse" {
 			errHandler(errs["length"], "Expected "+strconv.Itoa(inst.length-1)+" bytes for "+inst.mnemonic+".")
 		} else {
 			if len(bytes) > 1 {
@@ -289,7 +319,7 @@ func parseAddress(addr string, inst instruction, symbols []symbol) instruction {
 		for _, symbol := range symbols {
 			if symbol.label == addr { // symbol is known from previous pass
 				bytes := intToHex(symbol.intAddr)
-				if len(addr)/2 != inst.length-1 && inst.kind != "rel" {
+				if len(addr)/2 != inst.length-1 && inst.kind != "rel" && inst.kind != "pse" {
 					errHandler(errs["length"], "Expected "+strconv.Itoa(inst.length-1)+" bytes for "+inst.mnemonic+".")
 				} else {
 					if len(bytes) > 1 {
@@ -403,9 +433,6 @@ func assignOpcode(inst instruction) instruction {
 				errHandler(errs["opcode"])
 			}
 		}
-		// if inst.opcode == 0 && inst.mnemonic != "brk" {
-		// 	errHandler(errs["opcode"])
-		// }
 	}
 	return inst
 }
@@ -468,21 +495,21 @@ func asmObject(insts []instruction) (obj [][]byte) {
 	return obj
 }
 
-func setOrg(insts []instruction) (org int) {
+func getOrg(insts []instruction) {
 	for _, inst := range insts {
 		if inst.mnemonic == "org" {
 			var addr = [2]byte{inst.opHighByte, inst.opLowByte}
-			return hexToInt(addr)
+			org = hexToInt(addr)
+			break
 		}
 	}
-	return 0
 }
 
 func getSymbols(insts []instruction) {
 	var PC int = org
 	for i, inst := range insts {
 		curLine = i
-		if inst.label != "" {
+		if inst.label != "" && inst.kind != "pse" {
 			var tmp symbol
 			tmp.label = inst.label
 			tmp.intAddr = PC
@@ -493,9 +520,13 @@ func getSymbols(insts []instruction) {
 				tmp.addHighByte = tmpAddr[0]
 				tmp.addLowByte = tmpAddr[1]
 			}
-			symbols = append(symbols, tmp)
+			if symbolExists(tmp.label) {
+				errHandler(errs["duplicatesym"])
+			} else {
+				symbols = append(symbols, tmp)
+			}
 		}
-		if !inst.isComment && !(inst.kind == "pse") {
+		if !inst.isComment && inst.kind != "pse" {
 			PC += inst.length
 		}
 	}
@@ -611,9 +642,6 @@ func intToHex(addr int) []byte {
 }
 
 func symbolExists(sym string) bool {
-	if pass < 2 {
-		return true // all symbols unknown on pass 1
-	}
 	for _, symbol := range symbols {
 		if sym == symbol.label {
 			return true
@@ -652,25 +680,26 @@ func errHandler(err []string, deets ...string) {
 
 // For error handling
 var errs = map[string][]string{
-	"conversion":  {"Hex to byte", "Could not complete conversion."},
-	"file":        {"File I/O", "Could not read or write to file."},
-	"label":       {"Label", "Operand too short or cannot parse label."},
-	"labelLength": {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
-	"length":      {"Address length", "Address length does not match opcode."},
-	"mnemonic":    {"Mnemonic", "Could not find a valid mnemonic."},
-	"opcode":      {"Opcode", "Invalid mnemonic/operand combination."},
-	"operand":     {"Operand", "The operand is ill formed."},
-	"org":         {"Org", "Pseudo-op address could not be determined."},
-	"parser":      {"Parser", "Could not parse line successfully."},
-	"relative":    {"Branching", "Relative address is out of range."},
-	"space":       {"Memory", "Object will not fit in address space."},
-	"symbol":      {"Symbol", "Could not determine symbol address."},
-	"unknownsym":  {"Symbol", "Symbol not defined."}}
+	"conversion":   {"Hex to byte", "Could not complete conversion."},
+	"duplicatesym": {"Duplicate symbol", "The label already exists in the symbol table."},
+	"file":         {"File I/O", "Could not read or write to file."},
+	"label":        {"Label", "Operand too short or cannot parse label."},
+	"labelLength":  {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
+	"length":       {"Address length", "Address length does not match opcode."},
+	"mnemonic":     {"Mnemonic", "Could not find a valid mnemonic."},
+	"opcode":       {"Opcode", "Invalid mnemonic/operand combination."},
+	"operand":      {"Operand", "The operand is ill formed."},
+	"org":          {"Org", "Pseudo-op address could not be determined."},
+	"parser":       {"Parser", "Could not parse line successfully."},
+	"relative":     {"Branching", "Relative address is out of range."},
+	"space":        {"Memory", "Object will not fit in address space."},
+	"symbol":       {"Symbol", "Could not determine symbol address."},
+	"unknownsym":   {"Symbol", "Symbol not defined."}}
 
 func testPrint(inst instruction) {
 	fmt.Println("Instruction")
 	fmt.Println(strings.Repeat("=", 20))
-	if inst.isComment {
+	if inst.isComment && inst.kind != "pse" {
 		fmt.Println("Comment line")
 	} else {
 		fmt.Println("Mnemonic: " + inst.mnemonic)
