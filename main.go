@@ -666,6 +666,9 @@ func printAtWidth(str string, wid int, filler ...string) (length int) {
 }
 
 func errHandler(err []string, deets ...string) {
+	if len(lines) == 0 {
+		lines = append(lines, "")
+	}
 	color.FgRed.Print("\nERROR ")
 	color.FgDefault.Print("[line " + strconv.Itoa(curLine+1) + "] ")
 	fmt.Println(strings.Split(strings.Split(strings.TrimSpace(lines[curLine]), "*")[0], ";")[0])
