@@ -127,7 +127,7 @@ func main() {
 	nowstr += ofilename + "\n"
 	saveFile(logfilename, nowstr+log)
 
-	fmt.Print(log)
+	fmt.Print(log + "\n")
 }
 
 func runPass(lines []string, insts []instruction) []instruction {
