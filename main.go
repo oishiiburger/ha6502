@@ -88,8 +88,17 @@ func main() {
 	var pass2Inst []instruction
 
 	fmt.Println(info["title"] + "\n" + info["github"])
-	filename = "./files/test.s"
-	ofilename = "./files/out.o"
+
+	if len(os.Args) <= 1 {
+		errHandler(errs["nofile"])
+	} else if len(os.Args) == 2 {
+		filename = os.Args[1]
+		ofilename = removePathFileExtension(filename) + ".o"
+		fmt.Println(ofilename)
+	} else {
+		errHandler(errs["toomanyargs"])
+	}
+
 	lines = loadFile(filename)
 
 	var objectCode [][]byte
@@ -666,12 +675,13 @@ func printAtWidth(str string, wid int, filler ...string) (length int) {
 }
 
 func errHandler(err []string, deets ...string) {
-	if len(lines) == 0 {
-		lines = append(lines, "")
-	}
 	color.FgRed.Print("\nERROR ")
-	color.FgDefault.Print("[line " + strconv.Itoa(curLine+1) + "] ")
-	fmt.Println(strings.Split(strings.Split(strings.TrimSpace(lines[curLine]), "*")[0], ";")[0])
+	if len(lines) == 0 {
+		color.FgDefault.Println("[preproc]")
+	} else {
+		color.FgDefault.Print("[line " + strconv.Itoa(curLine+1) + "] ")
+		fmt.Println(strings.Split(strings.Split(strings.TrimSpace(lines[curLine]), "*")[0], ";")[0])
+	}
 	fmt.Println(err[1])
 	if len(deets) > 0 {
 		fmt.Println(deets[0])
@@ -690,6 +700,7 @@ var errs = map[string][]string{
 	"labelLength":  {"Label", "Label must not exceed " + strconv.Itoa(maxLabelLength) + " chars."},
 	"length":       {"Address length", "Address length does not match opcode."},
 	"mnemonic":     {"Mnemonic", "Could not find a valid mnemonic."},
+	"nofile":       {"File I/O", "No file specified."},
 	"opcode":       {"Opcode", "Invalid mnemonic/operand combination."},
 	"operand":      {"Operand", "The operand is ill formed."},
 	"org":          {"Org", "Pseudo-op address could not be determined."},
@@ -697,7 +708,26 @@ var errs = map[string][]string{
 	"relative":     {"Branching", "Relative address is out of range."},
 	"space":        {"Memory", "Object will not fit in address space."},
 	"symbol":       {"Symbol", "Could not determine symbol address."},
+	"toomanyargs":  {"Arguments", "Too many arguments on command line"},
 	"unknownsym":   {"Symbol", "Symbol not defined."}}
+
+func removePathFileExtension(path string) (newpath string) {
+	slash_chk := strings.Split(path, "/")
+	for i, item := range slash_chk {
+		if i == len(slash_chk)-1 {
+			break
+		}
+		newpath += item + "/"
+	}
+	dot_chk := strings.Split(slash_chk[len(slash_chk)-1], ".")
+	for i, item := range dot_chk {
+		if i == len(dot_chk)-1 {
+			break
+		}
+		newpath += item
+	}
+	return
+}
 
 func testPrint(inst instruction) {
 	fmt.Println("Instruction")
