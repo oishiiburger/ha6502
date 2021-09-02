@@ -50,7 +50,8 @@ var rZpiy = regexp.MustCompile(`^[(][$]?[0-9a-f]{2}[)],y$`)
 var rInd = regexp.MustCompile(`^[(][$]?[0-9a-f]{2,4}[)]$`)
 
 var rAddr = regexp.MustCompile(`[0-9a-f]{2,4}`)
-var rMnem = regexp.MustCompile(`^[A-Za-z]{3}$`)
+
+// var rMnem = regexp.MustCompile(`^[A-Za-z]{3}$`)
 
 var rLabel = regexp.MustCompile(`^[A-Za-z]{1,6}$`)
 var rLabelCol = regexp.MustCompile(`^[A-Za-z]{1,6}:$`)

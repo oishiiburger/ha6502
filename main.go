@@ -39,6 +39,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gookit/color"
 )
@@ -71,17 +72,20 @@ type symbol struct {
 
 // Consts
 const comchars string = ";*"
-const modchars string = "#$"
+
+// const modchars string = "#$"
 const maxLabelLength int = 7
 
 // Globals
-var filename string
-var ofilename string
-var curLine int = 0 // set to 0 when not testing
-var org int = 0
-var pass int = 1
-var symbols []symbol
-var lines []string
+var filename string    // input file path
+var ofilename string   // output file path
+var logfilename string // log output path
+var curLine int = 0    // set to 0 when not testing
+var org int = 0        // where to start the code (just for the log)
+var pass int = 1       // which pass is underway
+var symbols []symbol   // symbol table
+var lines []string     // lines from the input file
+var log string         // log of output text
 
 func main() {
 	var pass1Inst []instruction
@@ -94,7 +98,7 @@ func main() {
 	} else if len(os.Args) == 2 {
 		filename = os.Args[1]
 		ofilename = removePathFileExtension(filename) + ".o"
-		fmt.Println(ofilename)
+		logfilename = removePathFileExtension(filename) + ".log"
 	} else {
 		errHandler(errs["toomanyargs"])
 	}
@@ -114,9 +118,16 @@ func main() {
 
 	objectCode = asmObject(pass2Inst)
 
-	printAssembly(lines, objectCode)
-	printSymbolTable()
-	saveFile(ofilename, objectCode)
+	logAssembly(lines, objectCode)
+	logSymbolTable()
+	saveObjectFile(ofilename, objectCode)
+
+	now := time.Now()
+	nowstr := now.Format(time.RFC850) + "\n"
+	nowstr += ofilename + "\n"
+	saveFile(logfilename, nowstr+log)
+
+	fmt.Print(log)
 }
 
 func runPass(lines []string, insts []instruction) []instruction {
@@ -541,80 +552,92 @@ func getSymbols(insts []instruction) {
 	}
 }
 
-func printAssembly(lines []string, obj [][]byte) {
+func logAssembly(lines []string, obj [][]byte) {
 	// addr | sym | ops | line | file
 	// 5	  7	    10    7      no limit
 	var symi int = 0
 	var PC int = org
 	var PCStart int = PC
-	printAtWidth("\nAssembly Listing ", 75, "=")
-	fmt.Println()
+	log += setStringToWidth("\nAssembly Listing ", 75, "=") + "\n"
 	for i, line := range obj {
 		if len(line) > 0 {
-			printAtWidth(fmt.Sprintf("%04X", PC), 5)
+			log += setStringToWidth(fmt.Sprintf("%04X", PC), 5)
 			// PC += len(line)
 		} else {
-			printAtWidth("", 5)
+			log += setStringToWidth("", 5)
 		}
 		if len(symbols) > 0 && symbols[symi].intAddr == PC && len(line) > 0 {
-			printAtWidth(symbols[symi].label, 7)
+			log += setStringToWidth(symbols[symi].label, 7)
 			if len(symbols)-1 > symi {
 				symi++
 			}
 		} else {
-			printAtWidth("", 7)
+			log += setStringToWidth("", 7)
 		}
 		var tmp string
 		for _, op := range line {
 			tmp += fmt.Sprintf("%02X ", op)
 		}
-		printAtWidth(tmp, 10)
-		fmt.Print("| ")
-		printAtWidth(strconv.Itoa(i+1), 7)
-		fmt.Println(lines[i])
+		log += setStringToWidth(tmp, 10)
+		log += "| "
+		log += setStringToWidth(strconv.Itoa(i+1), 7)
+		log += lines[i] + "\n"
 		if len(line) > 0 {
 			PC += len(line)
 		}
 	}
-	fmt.Printf("\nObject will fill from $%04X through $%04X. ($%04X bytes)\n", PCStart, PC-1, PC-PCStart)
+	log += fmt.Sprintf("\nObject will fill from $%04X through $%04X. ($%04X bytes)\n", PCStart, PC-1, PC-PCStart)
 }
 
-func printSymbolTable() {
-	var colWidth int = 60
-	var runWidth int = 0
-	printAtWidth("\nSymbol Table ", 75, "=")
-	fmt.Println()
-	var tmp []string
-	for _, symbol := range symbols {
-		tmp = append(tmp, symbol.label)
-	}
-	sort.Strings(tmp)
-	for _, ssymbol := range tmp {
+func logSymbolTable() {
+	if len(symbols) != 0 {
+		var colWidth int = 60
+		var runWidth int = 0
+		log += setStringToWidth("\nSymbol Table ", 75, "=") + "\n"
+		var tmp []string
 		for _, symbol := range symbols {
-			if symbol.label == ssymbol {
-				if runWidth > colWidth {
-					fmt.Print("\n")
-					runWidth = 0
+			tmp = append(tmp, symbol.label)
+		}
+		sort.Strings(tmp)
+		for _, ssymbol := range tmp {
+			for _, symbol := range symbols {
+				if symbol.label == ssymbol {
+					if runWidth > colWidth {
+						log += "\n"
+						runWidth = 0
+					}
+					tmp := setStringToWidth(symbol.label, 8)
+					runWidth += len(tmp)
+					log += tmp
+					tmp = setStringToWidth(fmt.Sprintf("$%04X", symbol.intAddr), 12)
+					runWidth += len(tmp)
+					log += tmp
 				}
-				runWidth += printAtWidth(symbol.label, 8)
-				runWidth += printAtWidth(fmt.Sprintf("$%04X", symbol.intAddr), 12)
 			}
 		}
 	}
 }
 
-func saveFile(filename string, obj [][]byte) {
+func saveObjectFile(filename string, obj [][]byte) {
 	var tmp []byte
 	for _, line := range obj {
-		for _, op := range line {
-			tmp = append(tmp, op)
-		}
+		tmp = append(tmp, line...)
 	}
 	e := ioutil.WriteFile(filename, tmp, 0644)
 	if e != nil {
 		errHandler(errs["file"])
 	}
-	fmt.Println("\n\nWrote " + strconv.Itoa(len(tmp)) + " bytes to " + filename + ".")
+	fmt.Println("\nWrote " + strconv.Itoa(len(tmp)) + " bytes to " + filename + ".")
+}
+
+func saveFile(filename string, contents string) {
+	f, e := os.Create(filename)
+	if e != nil {
+		errHandler(errs["textfile"], filename)
+	}
+	defer f.Close()
+	f.WriteString(contents)
+	fmt.Println("Wrote " + strconv.Itoa(len(contents)) + " chars to " + filename + ".")
 }
 
 func isMnemonic(str string) bool {
@@ -624,10 +647,7 @@ func isMnemonic(str string) bool {
 		return true
 	}
 	_, ok = pseudoOps[str]
-	if ok {
-		return true
-	}
-	return false
+	return ok
 }
 
 func hexToInt(addr [2]byte) int {
@@ -659,25 +679,23 @@ func symbolExists(sym string) bool {
 	return false
 }
 
-func printAtWidth(str string, wid int, filler ...string) (length int) {
-	var tmp string
+func setStringToWidth(str string, wid int, filler ...string) (outstr string) {
 	var fill string = " "
 	if len(filler) > 0 {
 		fill = filler[0]
 	}
 	if len(str) < wid {
-		tmp = fmt.Sprint(str + strings.Repeat(fill, wid-len(str)))
+		outstr = fmt.Sprint(str + strings.Repeat(fill, wid-len(str)))
 	} else {
-		tmp = fmt.Sprint(str[:wid])
+		outstr = fmt.Sprint(str[:wid])
 	}
-	fmt.Print(tmp)
-	return len(tmp)
+	return
 }
 
 func errHandler(err []string, deets ...string) {
 	color.FgRed.Print("\nERROR ")
-	if len(lines) == 0 {
-		color.FgDefault.Println("[preproc]")
+	if len(lines) == 0 || err[0] == "File I/O" {
+		color.FgDefault.Println("[general]")
 	} else {
 		color.FgDefault.Print("[line " + strconv.Itoa(curLine+1) + "] ")
 		fmt.Println(strings.Split(strings.Split(strings.TrimSpace(lines[curLine]), "*")[0], ";")[0])
@@ -708,6 +726,7 @@ var errs = map[string][]string{
 	"relative":     {"Branching", "Relative address is out of range."},
 	"space":        {"Memory", "Object will not fit in address space."},
 	"symbol":       {"Symbol", "Could not determine symbol address."},
+	"textfile":     {"File I/O", "Could not write to text file."},
 	"toomanyargs":  {"Arguments", "Too many arguments on command line"},
 	"unknownsym":   {"Symbol", "Symbol not defined."}}
 
